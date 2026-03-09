@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Effi India",
+    "slug": "effi-india",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "effi-india",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F4C81"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.effiindia.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Effi India needs microphone access to let you speak with the municipal services AI agent.",
+        "NSCameraUsageDescription": "Effi India needs camera access for video calls."
+      }
+    },
+    "android": {
+      "package": "com.effiindia.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0F4C81",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "@livekit/react-native-expo-plugin",
+        {
+          "android": {
+            "audioType": "communication"
+          }
+        }
+      ],
+      "@config-plugins/react-native-webrtc",
+      "expo-router"
+    ]
+  }
+}

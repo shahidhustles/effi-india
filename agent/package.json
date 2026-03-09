@@ -1,0 +1,38 @@
+{
+  "name": "effi-india-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently --names \"TOKEN,AGENT\" --prefix-colors \"cyan,magenta\" \"node --env-file=.env.local node_modules/.bin/tsx watch src/server.ts\" \"node --env-file=.env.local --experimental-vm-modules node_modules/.bin/tsx src/agent.ts dev\"",
+    "dev:server": "node --env-file=.env.local node_modules/.bin/tsx watch src/server.ts",
+    "dev:agent": "node --env-file=.env.local --experimental-vm-modules node_modules/.bin/tsx src/agent.ts dev",
+    "download-files": "node --env-file=.env.local --experimental-vm-modules node_modules/.bin/tsx src/agent.ts download-files",
+    "build": "tsc",
+    "start": "concurrently --names \"TOKEN,AGENT\" --prefix-colors \"cyan,magenta\" \"node dist/server.js\" \"node dist/agent.js dev\""
+  },
+  "dependencies": {
+    "@livekit/agents": "^1.0.48",
+    "@livekit/agents-plugin-cartesia": "^1.0.48",
+    "@livekit/agents-plugin-deepgram": "^1.0.48",
+    "@livekit/agents-plugin-livekit": "^1.0.48",
+    "@livekit/agents-plugin-openai": "^1.0.48",
+    "@livekit/agents-plugin-silero": "^1.0.48",
+    "@livekit/noise-cancellation-node": "^0.1.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "livekit-server-sdk": "^2.15.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "concurrently": "^9.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}

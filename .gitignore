@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Environment variables (never commit secrets)
+.env.local
+.env
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# Debug logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# TypeScript build output
+agent/dist/
+
+# Agent KMS logs (may contain sensitive data)
+agent/KMS/logs/
+
+# Android build outputs
+mobile/android/build/
+mobile/android/app/build/
+
+# iOS build outputs
+mobile/ios/build/
+mobile/ios/Pods/
