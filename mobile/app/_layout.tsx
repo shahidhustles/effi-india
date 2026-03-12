@@ -8,25 +8,21 @@ registerGlobals();
 export default function RootLayout() {
   return (
     <>
-      <StatusBar style="light" />
+      <StatusBar style="dark" />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: "#0B0F1A" },
-          headerTintColor: "#E0F2FE",
-          headerTitleStyle: { fontWeight: "700" },
-          contentStyle: { backgroundColor: "#0B0F1A" },
-          headerShadowVisible: false,
+          headerShown: false,
+          contentStyle: { backgroundColor: "#F8FAFC" },
         }}
       >
         <Stack.Screen
           name="index"
-          options={{ title: "Effi India" }}
+          options={{ title: "Home" }}
         />
         <Stack.Screen
           name="call"
           options={{
-            title: "Call",
-            headerBackTitle: "End",
+            title: "Voice Chat",
             gestureEnabled: false,
           }}
         />
