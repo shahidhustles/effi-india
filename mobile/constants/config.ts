@@ -13,7 +13,9 @@
  *
  * For iOS simulator you can use "http://localhost:3001".
  */
-export const AGENT_API_URL = process.env.EXPO_PUBLIC_AGENT_API_URL ?? "http://localhost:3001";
+export const AGENT_API_URL =
+  process.env.EXPO_PUBLIC_AGENT_API_URL ??
+  "https://token-server-tawny.vercel.app";
 
 export const DEPARTMENTS = [
   {
