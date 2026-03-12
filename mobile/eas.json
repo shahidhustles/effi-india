@@ -6,11 +6,17 @@
     "preview": {
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_AGENT_API_URL": "https://token-server-tawny.vercel.app"
       }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_AGENT_API_URL": "https://token-server-tawny.vercel.app"
       }
     }
   }

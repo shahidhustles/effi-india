@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --env-file=.env.local --experimental-vm-modules node_modules/.bin/tsx src/agent.ts dev",
-    "download-files": "node --env-file=.env.local --experimental-vm-modules node_modules/.bin/tsx src/agent.ts download-files",
+    "dev": "node --env-file=.env.local --experimental-vm-modules --import tsx/esm src/agent.ts dev",
+    "download-files": "node --env-file=.env.local --experimental-vm-modules --import tsx/esm src/agent.ts download-files",
     "build": "tsc",
     "start": "node dist/agent.js dev"
   },
