@@ -188,16 +188,20 @@ export default defineAgent({
     // ── Build the voice pipeline ──────────────────────────────────────────────
     const vad = ctx.proc.userData.vad as silero.VAD;
 
-    // STT: nova-3 with language:'multi' = Deepgram auto-detects the spoken
-    // language (Hindi, Marathi, Tamil, English, etc.) on every utterance.
-    // smartFormat and punctuate are intentionally omitted: they add significant
-    // post-processing latency that causes Deepgram to delay its final transcript
-    // past VAD END_OF_SPEECH, resulting in empty audioTranscript and skipped
-    // turn detection. Without them, finals arrive within ~100ms of speech ending.
+    // STT: nova-3 with language:'multi' enables Deepgram's multilingual
+    // codeswitching — auto-detects Hindi, Marathi, Tamil, English, etc.
+    // IMPORTANT: punctuate & smartFormat MUST be false for language=multi;
+    // Deepgram returns HTTP 400 if they're enabled with codeswitching.
+    // endpointing=100 is Deepgram's recommended value for multilingual streams.
     const stt = new deepgram.STT({
       model: "nova-3",
       language: "multi",
       interimResults: true,
+      punctuate: false,
+      smartFormat: false,
+      endpointing: 100,
+      noDelay: true,
+      sampleRate: 16000,
     });
 
     const lmm = new openai.LLM({
@@ -212,12 +216,12 @@ export default defineAgent({
     // Using CARTESIA_HINDI_VOICE_ID (Indian voice) with language:'hi' ensures:
     //   • Hindi/Marathi/Indian-language output sounds native.
     //   • English output carries an Indian accent (desired for this app).
-    // Cast is needed because the installed plugin typings predate sonic-3.
+    // NOTE: speed must be numeric for sonic-3 (string "normal" causes invalid JSON).
+    // Omitting speed entirely uses the default (1.0).
     const tts = new cartesia.TTS({
-      model: "sonic-3" as any, // cast needed: plugin typing is behind the latest model
+      model: "sonic-3" as any,
       voice: CARTESIA_VOICE_ID,
-      language: "hi", // Indian Hindi phoneme rules → Indian accent across all output
-      speed: "normal",
+      language: "hi",
     });
 
     // ── Build the agent ───────────────────────────────────────────────────────
@@ -227,19 +231,21 @@ export default defineAgent({
     });
 
     // ── Create and start the session ──────────────────────────────────────────
+    // turnDetection: 'vad' — Silero VAD handles turn boundaries purely from
+    // audio energy. This avoids the MultilingualModel issue where 'multi' is
+    // not a real language code, causing "Language multi not supported" warnings.
+    // VAD-based detection is language-agnostic and works for all Indian languages.
     const session = new voice.AgentSession({
       stt,
       llm: lmm,
       tts,
       vad,
-      // No explicit turnDetection: MultilingualModel requires real language codes
-      // (e.g. 'hi', 'mr') but the deepgram plugin passes the literal string 'multi',
-      // causing 'Language multi not supported' warnings and fallthrough-only behaviour
-      // that is identical to pure VAD. Pure VAD turn detection works for all languages.
+      turnDetection: "vad",
       voiceOptions: {
         allowInterruptions: true,
         minInterruptionDuration: 600,
-        maxEndpointingDelay: 6000,
+        minEndpointingDelay: 400,
+        maxEndpointingDelay: 3500,
       },
     });
 
