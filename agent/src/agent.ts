@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import "dotenv/config";
 import {
   type JobContext,
   type JobProcess,
@@ -7,21 +7,20 @@ import {
   defineAgent,
   llm,
   voice,
-} from '@livekit/agents';
+} from "@livekit/agents";
 
 const { AgentSessionEventTypes } = voice;
-import * as deepgram from '@livekit/agents-plugin-deepgram';
-import * as cartesia from '@livekit/agents-plugin-cartesia';
-import * as openai from '@livekit/agents-plugin-openai';
-import * as silero from '@livekit/agents-plugin-silero';
-import * as livekit from '@livekit/agents-plugin-livekit';
-import { BackgroundVoiceCancellation } from '@livekit/noise-cancellation-node';
-import { fileURLToPath } from 'node:url';
-import { z } from 'zod';
+import * as deepgram from "@livekit/agents-plugin-deepgram";
+import * as cartesia from "@livekit/agents-plugin-cartesia";
+import * as openai from "@livekit/agents-plugin-openai";
+import * as silero from "@livekit/agents-plugin-silero";
+import { BackgroundVoiceCancellation } from "@livekit/noise-cancellation-node";
+import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type Department = 'MUNICIPAL' | 'WATER' | 'ELECTRICITY';
+type Department = "MUNICIPAL" | "WATER" | "ELECTRICITY";
 
 interface RoomMetadata {
   department: Department;
@@ -29,16 +28,20 @@ interface RoomMetadata {
 }
 
 // ─── Cartesia voice ID ────────────────────────────────────────────────────────
-// Use a single multilingual voice. sonic-multilingual handles all languages.
-// Override with CARTESIA_VOICE_ID env var to use your own voice.
-const CARTESIA_VOICE_ID = process.env.CARTESIA_VOICE_ID ?? '79a125e8-cd45-4c13-8a67-188112f4dd22';
+// Use the Indian Hindi voice from env — gives an Indian accent across all
+// Indian languages. sonic-3 supports hi, ta, mr, bn, te, gu, kn, ml, pa etc.
+// CARTESIA_HINDI_VOICE_ID should be an Indian voice from https://play.cartesia.ai
+const CARTESIA_VOICE_ID =
+  process.env.CARTESIA_HINDI_VOICE_ID ??
+  process.env.CARTESIA_VOICE_ID ??
+  "79a125e8-cd45-4c13-8a67-188112f4dd22";
 
 // ─── Department display names ──────────────────────────────────────────────────
 
 const DEPT_NAMES: Record<Department, string> = {
-  MUNICIPAL:   'Municipal Services',
-  WATER:       'Water & Sanitation',
-  ELECTRICITY: 'Electricity',
+  MUNICIPAL: "Municipal Services",
+  WATER: "Water & Sanitation",
+  ELECTRICITY: "Electricity",
 };
 
 // ─── System prompt factory ────────────────────────────────────────────────────
@@ -87,9 +90,12 @@ IMPORTANT:
 
 function getDepartmentProblems(dept: Department): string {
   const problems: Record<Department, string> = {
-    MUNICIPAL:   'Potholes and road damage, garbage collection, broken streetlights, stray animals, drainage blockage, illegal encroachment.',
-    WATER:       'Water supply outages, pipe leaks, billing disputes, water contamination, low water pressure, new connection requests.',
-    ELECTRICITY: 'Power outages, billing disputes, meter faults, dangerous wires, transformer issues, new connection requests.',
+    MUNICIPAL:
+      "Potholes and road damage, garbage collection, broken streetlights, stray animals, drainage blockage, illegal encroachment.",
+    WATER:
+      "Water supply outages, pipe leaks, billing disputes, water contamination, low water pressure, new connection requests.",
+    ELECTRICITY:
+      "Power outages, billing disputes, meter faults, dangerous wires, transformer issues, new connection requests.",
   };
   return problems[dept];
 }
@@ -97,20 +103,40 @@ function getDepartmentProblems(dept: Department): string {
 // ─── LLM tool — registerComplaint ────────────────────────────────────────────
 
 const registerComplaint = llm.tool({
-  description: 'Register a citizen complaint after collecting their problem description and location. Call this only once you have both the problem and location.',
+  description:
+    "Register a citizen complaint after collecting their problem description and location. Call this only once you have both the problem and location.",
   parameters: z.object({
-    problemType: z.string().describe('Short slug describing the problem, e.g. pothole, power_outage, pipe_leak'),
-    description: z.string().describe('Brief description of the complaint in the citizen language'),
-    location: z.string().describe('Address or location of the problem as stated by the citizen'),
-    callerName: z.string().optional().describe('Name of the citizen if provided'),
-    language: z.string().describe('Detected language code of the conversation, e.g. hi, en, ta'),
+    problemType: z
+      .string()
+      .describe(
+        "Short slug describing the problem, e.g. pothole, power_outage, pipe_leak",
+      ),
+    description: z
+      .string()
+      .describe("Brief description of the complaint in the citizen language"),
+    location: z
+      .string()
+      .describe("Address or location of the problem as stated by the citizen"),
+    callerName: z
+      .string()
+      .optional()
+      .describe("Name of the citizen if provided"),
+    language: z
+      .string()
+      .describe("Detected language code of the conversation, e.g. hi, en, ta"),
   }),
-  execute: async ({ problemType, description, location, callerName, language }) => {
+  execute: async ({
+    problemType,
+    description,
+    location,
+    callerName,
+    language,
+  }) => {
     // Generate a simple ticket number for demo purposes.
     // In the full system, this would insert into Supabase and return the real ticket ID.
     const ticketId = `EFF-${Date.now().toString(36).toUpperCase()}`;
 
-    console.log('[agent] Complaint registered:', {
+    console.log("[agent] Complaint registered:", {
       ticketId,
       problemType,
       description,
@@ -135,9 +161,9 @@ export default defineAgent({
    * We load the Silero VAD model here so it's ready when a call comes in.
    */
   prewarm: async (proc: JobProcess) => {
-    console.log('[agent] Prewarming — loading Silero VAD model...');
+    console.log("[agent] Prewarming — loading Silero VAD model...");
     proc.userData.vad = await silero.VAD.load();
-    console.log('[agent] Silero VAD ready');
+    console.log("[agent] Silero VAD ready");
   },
 
   /**
@@ -145,13 +171,13 @@ export default defineAgent({
    */
   entry: async (ctx: JobContext) => {
     // ── Parse room metadata ───────────────────────────────────────────────────
-    let department: Department = 'MUNICIPAL';
+    let department: Department = "MUNICIPAL";
 
     try {
-      const meta: RoomMetadata = JSON.parse(ctx.room.metadata ?? '{}');
+      const meta: RoomMetadata = JSON.parse(ctx.room.metadata ?? "{}");
       if (meta.department) department = meta.department;
     } catch {
-      console.warn('[agent] Could not parse room metadata, using defaults');
+      console.warn("[agent] Could not parse room metadata, using defaults");
     }
 
     console.log(`[agent] Joining room: ${ctx.room.name} | dept: ${department}`);
@@ -162,34 +188,36 @@ export default defineAgent({
     // ── Build the voice pipeline ──────────────────────────────────────────────
     const vad = ctx.proc.userData.vad as silero.VAD;
 
-    // STT: Use nova-3 with detectLanguage=true so Deepgram auto-detects
-    // whatever language the citizen speaks (Hindi, English, Tamil, etc.).
-    // The plugin clears the language field automatically when detectLanguage is
-    // true — do NOT set language:'multi' manually, it's handled internally.
+    // STT: nova-3 with language:'multi' = Deepgram auto-detects the spoken
+    // language (Hindi, Marathi, Tamil, English, etc.) on every utterance.
+    // smartFormat and punctuate are intentionally omitted: they add significant
+    // post-processing latency that causes Deepgram to delay its final transcript
+    // past VAD END_OF_SPEECH, resulting in empty audioTranscript and skipped
+    // turn detection. Without them, finals arrive within ~100ms of speech ending.
     const stt = new deepgram.STT({
-      model: 'nova-3',
-      detectLanguage: true,   // ← key: auto-detect, don't lock to one language
-      smartFormat: true,
+      model: "nova-3",
+      language: "multi",
       interimResults: true,
-      punctuate: true,
     });
 
     const lmm = new openai.LLM({
-      model: 'openai/gpt-4o',
-      baseURL: 'https://ai-gateway.vercel.sh/v1',
+      model: "openai/gpt-4o",
+      baseURL: "https://ai-gateway.vercel.sh/v1",
       apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY,
       temperature: 0.7,
     });
 
-    // TTS: sonic-3 is Cartesia's multilingual model. It synthesises in whatever
-    // language the text is written in — no per-language voice switching needed.
-    // When GPT-4o responds in Hindi, Cartesia synthesises Hindi. In Tamil → Tamil.
-    // The installed plugin's type only lists up to sonic-turbo, so we cast.
+    // TTS: sonic-3 is Cartesia's multilingual model supporting all major Indian
+    // languages: hi, ta, mr, bn, te, gu, kn, ml, pa, and also en.
+    // Using CARTESIA_HINDI_VOICE_ID (Indian voice) with language:'hi' ensures:
+    //   • Hindi/Marathi/Indian-language output sounds native.
+    //   • English output carries an Indian accent (desired for this app).
+    // Cast is needed because the installed plugin typings predate sonic-3.
     const tts = new cartesia.TTS({
-      model: 'sonic-3' as any, // cast needed: plugin typing is behind the latest model
+      model: "sonic-3" as any, // cast needed: plugin typing is behind the latest model
       voice: CARTESIA_VOICE_ID,
-      language: 'en',   // initial hint; sonic-3 auto-follows the text language
-      speed: 'normal',
+      language: "hi", // Indian Hindi phoneme rules → Indian accent across all output
+      speed: "normal",
     });
 
     // ── Build the agent ───────────────────────────────────────────────────────
@@ -204,20 +232,23 @@ export default defineAgent({
       llm: lmm,
       tts,
       vad,
-      // MultilingualModel handles turn detection across all Indian languages
-      turnDetection: new livekit.turnDetector.MultilingualModel(),
+      // No explicit turnDetection: MultilingualModel requires real language codes
+      // (e.g. 'hi', 'mr') but the deepgram plugin passes the literal string 'multi',
+      // causing 'Language multi not supported' warnings and fallthrough-only behaviour
+      // that is identical to pure VAD. Pure VAD turn detection works for all languages.
       voiceOptions: {
         allowInterruptions: true,
         minInterruptionDuration: 600,
-        // Extra time for longer sentences in Indian languages
-        maxEndpointingDelay: 5000,
+        maxEndpointingDelay: 6000,
       },
     });
 
     // ── Event listeners ───────────────────────────────────────────────────────
     session.on(AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       if (ev.transcript.trim()) {
-        console.log(`[citizen → agent] "${ev.transcript}" (final: ${ev.isFinal})`);
+        console.log(
+          `[citizen → agent] "${ev.transcript}" (final: ${ev.isFinal})`,
+        );
       }
     });
 
@@ -226,7 +257,7 @@ export default defineAgent({
     });
 
     session.on(AgentSessionEventTypes.Error, (ev) => {
-      console.error('[agent] Session error:', ev.error);
+      console.error("[agent] Session error:", ev.error);
     });
 
     // ── Start the session ─────────────────────────────────────────────────────

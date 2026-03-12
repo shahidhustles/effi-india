@@ -42,6 +42,7 @@ function CallUI({ department }: { department: DepartmentId }) {
   const connectionState = useConnectionState();
 
   const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
   const dept = DEPARTMENTS.find((d) => d.id === department) ?? DEPARTMENTS[0];
@@ -80,19 +81,31 @@ function CallUI({ department }: { department: DepartmentId }) {
     }
   }, [localParticipant, isMuted]);
 
+  const toggleSpeaker = useCallback(async () => {
+    try {
+      const next = !isSpeakerOn;
+      if (Platform.OS === "ios") {
+        await AudioSession.selectAudioOutput(
+          next ? "force_speaker" : "default",
+        );
+      } else {
+        await AudioSession.selectAudioOutput(next ? "speaker" : "earpiece");
+      }
+      setIsSpeakerOn(next);
+    } catch (e) {
+      console.warn("Speaker toggle failed:", e);
+    }
+  }, [isSpeakerOn]);
+
   const endCall = useCallback(() => {
-    Alert.alert(
-      "End Call?",
-      "Are you sure you want to end this call?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "End Call",
-          style: "destructive",
-          onPress: () => router.back(),
-        },
-      ]
-    );
+    Alert.alert("End Call?", "Are you sure you want to end this call?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "End Call",
+        style: "destructive",
+        onPress: () => router.back(),
+      },
+    ]);
   }, [router]);
 
   const getStatusLabel = (state: AgentState | undefined) => {
@@ -123,8 +136,8 @@ function CallUI({ department }: { department: DepartmentId }) {
             dept.id === "MUNICIPAL"
               ? "business-outline"
               : dept.id === "WATER"
-              ? "water-outline"
-              : "flash-outline"
+                ? "water-outline"
+                : "flash-outline"
           }
           size={18}
           color={dept.color}
@@ -177,14 +190,66 @@ function CallUI({ department }: { department: DepartmentId }) {
             size={26}
             color={isMuted ? "#FCA5A5" : "#94A3B8"}
           />
-          <Text style={[styles.controlBtnLabel, isMuted && styles.controlBtnLabelActive]}>
+          <Text
+            style={[
+              styles.controlBtnLabel,
+              isMuted && styles.controlBtnLabelActive,
+            ]}
+          >
             {isMuted ? "Muted" : "Mic"}
           </Text>
         </TouchableOpacity>
 
+        {/* Speaker button */}
+        <TouchableOpacity
+          style={[
+            styles.controlBtn,
+            isSpeakerOn && styles.controlBtnActive,
+            connectionState !== ConnectionState.Connected &&
+              styles.controlBtnDisabled,
+          ]}
+          onPress={
+            connectionState === ConnectionState.Connected
+              ? toggleSpeaker
+              : undefined
+          }
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isSpeakerOn ? "volume-high" : "volume-medium"}
+            size={26}
+            color={
+              connectionState !== ConnectionState.Connected
+                ? "#475569"
+                : isSpeakerOn
+                  ? "#6EE7B7"
+                  : "#94A3B8"
+            }
+          />
+          <Text
+            style={[
+              styles.controlBtnLabel,
+              isSpeakerOn && styles.controlBtnLabelActive,
+              connectionState !== ConnectionState.Connected &&
+                styles.controlBtnLabelDisabled,
+            ]}
+          >
+            {isSpeakerOn ? "Speaker" : "Earpiece"}
+          </Text>
+        </TouchableOpacity>
+
         {/* End call */}
-        <TouchableOpacity style={styles.endBtn} onPress={endCall} activeOpacity={0.7}>
-          <Ionicons name="call" size={26} color="#FFFFFF" style={{ transform: [{ rotate: "135deg" }] }} />
+        <TouchableOpacity
+          style={styles.endBtn}
+          onPress={endCall}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name="call"
+            size={26}
+            color="#FFFFFF"
+            style={{ transform: [{ rotate: "135deg" }] }}
+          />
           <Text style={styles.endBtnLabel}>End Call</Text>
         </TouchableOpacity>
       </View>
@@ -232,7 +297,9 @@ export default function CallScreen() {
   if (!token || !serverUrl) {
     return (
       <View style={styles.errorContainer}>
-        <Text style={styles.errorText}>Missing connection details. Please go back and try again.</Text>
+        <Text style={styles.errorText}>
+          Missing connection details. Please go back and try again.
+        </Text>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Text style={styles.backBtnText}>Go Back</Text>
         </TouchableOpacity>
@@ -379,6 +446,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.4,
     shadowRadius: 12,
     elevation: 8,
+  },
+  controlBtnDisabled: {
+    opacity: 0.4,
+  },
+  controlBtnLabelDisabled: {
+    color: "#475569",
   },
   endBtnLabel: {
     color: "#FFFFFF",
