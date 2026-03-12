@@ -47,10 +47,10 @@ export default function HomeScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerAccent} />
+        <Text style={styles.headerGreeting}>Hello,</Text>
         <Text style={styles.headerTitle}>Effi India</Text>
         <Text style={styles.headerSubtitle}>
-          AI-powered citizen services assistant
+          Make your day easy with our AI-powered citizen services assistant.
         </Text>
       </View>
 
@@ -81,7 +81,7 @@ export default function HomeScreen() {
             </View>
             {isSelected && (
               <View style={[styles.checkBadge, { backgroundColor: dept.color }]}>
-                <Ionicons name="checkmark" size={16} color="#0B0F1A" />
+                <Ionicons name="checkmark" size={14} color="#FFFFFF" />
               </View>
             )}
           </TouchableOpacity>
@@ -96,17 +96,17 @@ export default function HomeScreen() {
         activeOpacity={0.8}
       >
         {isFetching ? (
-          <ActivityIndicator color="#0B0F1A" />
+          <ActivityIndicator color="#FFFFFF" />
         ) : (
           <>
-            <Ionicons name="call" size={22} color="#0B0F1A" />
-            <Text style={styles.callBtnText}>Start Call</Text>
+            <Ionicons name="mic-outline" size={24} color="#FFFFFF" />
+            <Text style={styles.callBtnText}>Start Interaction</Text>
           </>
         )}
       </TouchableOpacity>
 
       <Text style={styles.footer}>
-        Powered by LiveKit  ·  Deepgram  ·  GPT-4o  ·  Cartesia
+        🇮🇳 Made in India
       </Text>
     </ScrollView>
   );
@@ -114,96 +114,92 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: 20,
-    paddingBottom: 48,
-    backgroundColor: "#0B0F1A",
+    padding: 24,
+    paddingTop: 60,
+    backgroundColor: "#F8FAFC",
     minHeight: "100%",
   },
 
   // Header
   header: {
-    backgroundColor: "#111827",
-    borderRadius: 20,
-    padding: 24,
-    marginBottom: 28,
-    borderWidth: 1,
-    borderColor: "#1E293B",
-    overflow: "hidden",
+    marginBottom: 32,
   },
-  headerAccent: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-    backgroundColor: "#06B6D4",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+  headerGreeting: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 4,
   },
   headerTitle: {
-    color: "#F0FDFA",
-    fontSize: 26,
+    color: "#3B82F6",
+    fontSize: 28,
     fontWeight: "800",
     letterSpacing: -0.5,
-    marginBottom: 6,
+    marginBottom: 10,
   },
   headerSubtitle: {
-    color: "#67E8F9",
-    fontSize: 14,
-    fontWeight: "500",
-    opacity: 0.8,
+    color: "#64748B",
+    fontSize: 16,
+    fontWeight: "400",
+    lineHeight: 24,
   },
 
   // Section
   sectionLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#4B5563",
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#94A3B8",
     textTransform: "uppercase",
     letterSpacing: 1.2,
-    marginBottom: 12,
-    marginTop: 4,
+    marginBottom: 16,
+    paddingLeft: 4,
   },
 
   // Cards
   card: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#111827",
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: "#1E293B",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 16,
+    elevation: 3,
+    borderWidth: 1.5,
+    borderColor: "transparent",
   },
   cardIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 14,
+    width: 56,
+    height: 56,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 14,
+    marginRight: 16,
   },
   cardBody: {
     flex: 1,
   },
   cardTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "700",
-    color: "#E5E7EB",
+    color: "#1E293B",
   },
   cardDesc: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginTop: 3,
+    fontSize: 13,
+    color: "#94A3B8",
+    marginTop: 4,
+    lineHeight: 18,
   },
   checkBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: 8,
+    marginLeft: 12,
   },
 
   // Call button
@@ -211,33 +207,34 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#06B6D4",
-    borderRadius: 16,
-    paddingVertical: 18,
-    gap: 10,
-    marginTop: 20,
-    shadowColor: "#06B6D4",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
+    backgroundColor: "#3B82F6",
+    borderRadius: 24,
+    paddingVertical: 20,
+    gap: 12,
+    marginTop: 24,
+    shadowColor: "#3B82F6",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
     elevation: 8,
   },
   callBtnDisabled: {
-    backgroundColor: "#164E63",
+    backgroundColor: "#93C5FD",
     shadowOpacity: 0,
+    elevation: 0,
   },
   callBtnText: {
-    color: "#0B0F1A",
+    color: "#FFFFFF",
     fontSize: 18,
-    fontWeight: "800",
+    fontWeight: "700",
   },
 
   // Footer
   footer: {
     textAlign: "center",
-    color: "#374151",
-    fontSize: 11,
-    marginTop: 28,
-    letterSpacing: 0.3,
+    color: "#94A3B8",
+    fontSize: 12,
+    marginTop: 40,
+    letterSpacing: 0.5,
   },
 });
