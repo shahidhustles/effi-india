@@ -22,22 +22,22 @@ export const DEPARTMENTS = [
     id: "MUNICIPAL" as const,
     label: "Municipal Services",
     description: "Potholes, garbage collection, streetlights",
-    iconName: "city-variant-outline" as const, // MaterialCommunityIcons
-    color: "#06B6D4",
+    iconName: "office-building-cog-outline" as const, // MaterialCommunityIcons
+    color: "#10B981", // Emerald Green for civic/municipal services
   },
   {
     id: "WATER" as const,
     label: "Water Supply",
     description: "Water outages, pipe leaks, billing",
-    iconName: "water-outline" as const,
-    color: "#22D3EE",
+    iconName: "water-pump" as const,
+    color: "#3B82F6", // Deep blue
   },
   {
     id: "ELECTRICITY" as const,
     label: "Electricity",
     description: "Power outages, billing, meter faults",
-    iconName: "lightning-bolt-outline" as const,
-    color: "#F59E0B",
+    iconName: "transmission-tower" as const,
+    color: "#F59E0B", // Amber/yellow
   },
 ] as const;
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  Animated,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -13,8 +14,8 @@ import {
   LiveKitRoom,
   useVoiceAssistant,
   useLocalParticipant,
-  BarVisualizer,
   useConnectionState,
+  useMultibandTrackVolume,
   AudioSession,
   AndroidAudioTypePresets,
   type AgentState,
@@ -32,6 +33,175 @@ interface CallParams {
   department: DepartmentId;
   language: string;
 }
+
+// ─── Wave Visualizer ──────────────────────────────────────────────────────────
+
+const BAR_COUNT = 55;
+const BAR_WIDTH = 4;
+const CONTOUR_HEIGHT = 150;
+
+function getGradientColor(index: number, total: number, dim: boolean) {
+  // from deep blue (#1E40AF -> 30, 64, 175) to bright cyan (#00E5FF -> 0, 229, 255)
+  const ratio = index / (total - 1);
+  const r = Math.round(30 + ratio * (0 - 30));
+  const g = Math.round(64 + ratio * (229 - 64));
+  const b = Math.round(175 + ratio * (255 - 175));
+  return `rgba(${r}, ${g}, ${b}, ${dim ? 0.4 : 1})`;
+}
+
+function smoothArray(data: number[], windowSize: number): number[] {
+  if (!data || !data.length) return [];
+  const result: number[] = [];
+  for (let i = 0; i < data.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = Math.max(0, i - windowSize); j <= Math.min(data.length - 1, i + windowSize); j++) {
+      const dist = Math.abs(i - j);
+      const weight = 1 / (dist + 1);
+      sum += data[j] * weight;
+      count += weight;
+    }
+    result.push(sum / count);
+  }
+  return result;
+}
+
+function WaveVisualizer({
+  agentState,
+  audioTrack,
+}: {
+  agentState: AgentState | undefined;
+  audioTrack: ReturnType<typeof useVoiceAssistant>["audioTrack"];
+}) {
+  const magnitudes = useMultibandTrackVolume(audioTrack, {
+    bands: BAR_COUNT,
+    minFrequency: 80,
+    maxFrequency: 8000,
+    updateInterval: 40,
+  });
+
+  const animatedHeights = useRef<Animated.Value[]>(
+    Array.from({ length: BAR_COUNT }, () => new Animated.Value(0.05))
+  ).current;
+
+  const phase = useRef(new Animated.Value(0)).current;
+  const phaseVal = useRef(0);
+
+  useEffect(() => {
+    if (agentState === "speaking") return;
+    const listener = phase.addListener(({ value }) => {
+      phaseVal.current = value;
+    });
+    const loop = Animated.loop(
+      Animated.timing(phase, {
+        toValue: 2 * Math.PI,
+        duration: 3000,
+        useNativeDriver: false,
+      })
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      phase.removeListener(listener);
+      phase.setValue(0);
+    };
+  }, [agentState, phase]);
+
+  useEffect(() => {
+    const hasMagnitudes = magnitudes.length === BAR_COUNT;
+    const isSpeaking = agentState === "speaking" && hasMagnitudes;
+
+    let displayMags = isSpeaking ? smoothArray(magnitudes, 3) : [];
+
+    const targets = Array.from({ length: BAR_COUNT }, (_, i) => {
+      const edgeTaper = Math.sin((i / (BAR_COUNT - 1)) * Math.PI); // 0 at edges, 1 in center
+
+      if (isSpeaking) {
+        let m = displayMags[i] || 0;
+        return Math.max(0.05, Math.min(1, m * edgeTaper * 1.5));
+      }
+
+      // Generative smooth wave for reading/listening/thinking
+      const x = i / (BAR_COUNT - 1);
+      const t = phaseVal.current;
+      
+      let wave = Math.sin(x * Math.PI * 3 - t * 2) * 0.15;
+      wave += Math.sin(x * Math.PI * 5 + t * 1.5) * 0.08;
+      
+      const base = 0.2;
+      const stateMultiplier =
+        agentState === "thinking" ? 1.8 : agentState === "listening" ? 1.4 : 0.6;
+
+      return Math.max(0.02, (base + wave) * edgeTaper * stateMultiplier);
+    });
+
+    const anims = animatedHeights.map((anim, i) =>
+      Animated.timing(anim, {
+        toValue: targets[i],
+        duration: isSpeaking ? 50 : 150,
+        useNativeDriver: false,
+      })
+    );
+    const parallel = Animated.parallel(anims);
+    parallel.start();
+    return () => parallel.stop();
+  }, [magnitudes, agentState, animatedHeights]);
+
+  return (
+    <View style={contourStyles.wrapper}>
+      <View style={contourStyles.glowBackdrop} />
+      <View style={contourStyles.barsRow}>
+        {animatedHeights.map((anim, i) => (
+          <Animated.View
+            key={i}
+            style={[
+              contourStyles.bar,
+              {
+                height: anim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [4, CONTOUR_HEIGHT],
+                }),
+                backgroundColor: getGradientColor(i, BAR_COUNT, agentState !== "speaking"),
+              },
+            ]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const contourStyles = StyleSheet.create({
+  wrapper: {
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    height: CONTOUR_HEIGHT + 40,
+  },
+  glowBackdrop: {
+    position: "absolute",
+    width: "80%",
+    height: 100,
+    backgroundColor: "rgba(0, 229, 255, 0.12)",
+    borderRadius: 100,
+    shadowColor: "#00E5FF",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 30,
+    elevation: 8,
+  },
+  barsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 0,
+    height: CONTOUR_HEIGHT,
+  },
+  bar: {
+    width: BAR_WIDTH,
+    borderRadius: BAR_WIDTH / 2,
+  },
+});
 
 // ─── Inner component (needs LiveKitRoom context) ───────────────────────────────
 
@@ -113,9 +283,6 @@ function CallUI({ department }: { department: DepartmentId }) {
       return "Connecting...";
     }
     switch (state) {
-      case "connecting":
-      case "initializing":
-        return "Effi is starting up...";
       case "listening":
         return "Listening...";
       case "thinking":
@@ -123,135 +290,90 @@ function CallUI({ department }: { department: DepartmentId }) {
       case "speaking":
         return "Speaking...";
       default:
-        return "Connected";
+        return "";
     }
   };
 
   return (
     <View style={styles.container}>
-      {/* Dept badge */}
-      <View style={[styles.deptBadge, { backgroundColor: dept.color + "15" }]}>
-        <Ionicons
-          name={
-            dept.id === "MUNICIPAL"
-              ? "business-outline"
-              : dept.id === "WATER"
-                ? "water-outline"
-                : "flash-outline"
-          }
-          size={18}
-          color={dept.color}
-        />
-        <Text style={[styles.deptLabel, { color: dept.color }]}>
-          {dept.label}
-        </Text>
+      {/* Top controls Row */}
+      <View style={styles.topBar}>
+        <TouchableOpacity style={styles.iconBtn} onPress={endCall}>
+          <Ionicons name="chevron-back" size={24} color="#0F172A" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Voice Assistant</Text>
+        <TouchableOpacity style={styles.iconBtn}>
+          <Ionicons name="ellipsis-horizontal" size={24} color="#0F172A" />
+        </TouchableOpacity>
       </View>
 
-      {/* Agent avatar + visualizer */}
+      <Text style={styles.greetingText}>
+        {getStatusLabel(agentState)}
+      </Text>
+
+      {/* Agent Avatar & Visualizer */}
       <View style={styles.visualizerContainer}>
-        <View style={styles.avatarRing}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>E</Text>
-          </View>
-        </View>
-
-        <BarVisualizer
-          state={agentState}
-          trackRef={audioTrack}
-          barCount={7}
-          style={styles.visualizer}
-          options={{
-            barColor: "#06B6D4",
-            barWidth: 8,
-            barBorderRadius: 4,
-            minHeight: 0.15,
-            maxHeight: 1,
-          }}
+        <WaveVisualizer
+          agentState={agentState}
+          audioTrack={audioTrack}
         />
 
-        <Text style={styles.statusText}>{getStatusLabel(agentState)}</Text>
+        {connectionState === ConnectionState.Connected && (
+          <Text style={styles.duration}>{formatDuration(callDuration)}</Text>
+        )}
       </View>
-
-      {/* Duration */}
-      {connectionState === ConnectionState.Connected && (
-        <Text style={styles.duration}>{formatDuration(callDuration)}</Text>
-      )}
 
       {/* Controls */}
-      <View style={styles.controls}>
-        {/* Mute button */}
-        <TouchableOpacity
-          style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
-          onPress={toggleMute}
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name={isMuted ? "mic-off" : "mic"}
-            size={26}
-            color={isMuted ? "#FCA5A5" : "#94A3B8"}
-          />
-          <Text
-            style={[
-              styles.controlBtnLabel,
-              isMuted && styles.controlBtnLabelActive,
-            ]}
+      <View style={styles.controlsContainer}>
+        <Text style={styles.deptSubInfo}>
+          Connected to {dept.label}
+        </Text>
+        <View style={styles.controls}>
+          {/* Mute button */}
+          <TouchableOpacity
+            style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
+            onPress={toggleMute}
+            activeOpacity={0.7}
           >
-            {isMuted ? "Muted" : "Mic"}
-          </Text>
-        </TouchableOpacity>
+            <Ionicons
+              name={isMuted ? "mic-off" : "mic"}
+              size={24}
+              color={isMuted ? "#EF4444" : "#475569"}
+            />
+          </TouchableOpacity>
 
-        {/* Speaker button */}
-        <TouchableOpacity
-          style={[
-            styles.controlBtn,
-            isSpeakerOn && styles.controlBtnActive,
-            connectionState !== ConnectionState.Connected &&
-              styles.controlBtnDisabled,
-          ]}
-          onPress={
-            connectionState === ConnectionState.Connected
-              ? toggleSpeaker
-              : undefined
-          }
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name={isSpeakerOn ? "volume-high" : "volume-medium"}
-            size={26}
-            color={
-              connectionState !== ConnectionState.Connected
-                ? "#475569"
-                : isSpeakerOn
-                  ? "#6EE7B7"
-                  : "#94A3B8"
-            }
-          />
-          <Text
-            style={[
-              styles.controlBtnLabel,
-              isSpeakerOn && styles.controlBtnLabelActive,
-              connectionState !== ConnectionState.Connected &&
-                styles.controlBtnLabelDisabled,
-            ]}
+          {/* End call */}
+          <TouchableOpacity
+            style={styles.endBtnMain}
+            onPress={endCall}
+            activeOpacity={0.8}
           >
-            {isSpeakerOn ? "Speaker" : "Earpiece"}
-          </Text>
-        </TouchableOpacity>
+            <Ionicons name="close" size={32} color="#FFFFFF" />
+          </TouchableOpacity>
 
-        {/* End call */}
-        <TouchableOpacity
-          style={styles.endBtn}
-          onPress={endCall}
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name="call"
-            size={26}
-            color="#FFFFFF"
-            style={{ transform: [{ rotate: "135deg" }] }}
-          />
-          <Text style={styles.endBtnLabel}>End Call</Text>
-        </TouchableOpacity>
+          {/* Speaker button */}
+          <TouchableOpacity
+            style={[
+              styles.controlBtn,
+              isSpeakerOn && styles.controlBtnActive,
+              connectionState !== ConnectionState.Connected && styles.controlBtnDisabled,
+            ]}
+            onPress={connectionState === ConnectionState.Connected ? toggleSpeaker : undefined}
+            activeOpacity={0.7}
+          >
+            <Ionicons
+              name={isSpeakerOn ? "volume-high" : "volume-medium"}
+              size={24}
+              color={
+                connectionState !== ConnectionState.Connected
+                  ? "#CBD5E1"
+                  : isSpeakerOn
+                  ? "#3B82F6"
+                  : "#475569"
+              }
+            />
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
@@ -332,155 +454,137 @@ export default function CallScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0B0F1A",
+    backgroundColor: "#F8FAFC",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingTop: 48,
-    paddingBottom: 56,
-    paddingHorizontal: 24,
+    paddingTop: 60,
+    paddingBottom: 40,
+    paddingHorizontal: 20,
   },
-  deptBadge: {
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 999,
-    gap: 8,
-    borderWidth: 1,
-    borderColor: "#1E293B",
+    justifyContent: "space-between",
+    width: "100%",
   },
-  deptLabel: {
-    fontSize: 14,
+  iconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  greetingText: {
+    fontSize: 24,
     fontWeight: "600",
-    letterSpacing: 0.3,
+    color: "#1E293B",
+    textAlign: "center",
+    marginTop: 20,
+    paddingHorizontal: 20,
+    lineHeight: 32,
   },
+
   visualizerContainer: {
     alignItems: "center",
-    gap: 20,
-  },
-  avatarRing: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 2,
-    borderColor: "#0E7490",
-    alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#06B6D4",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  avatar: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: "#111827",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#1E293B",
-  },
-  avatarText: {
-    color: "#06B6D4",
-    fontSize: 40,
-    fontWeight: "800",
-  },
-  visualizer: {
-    height: 60,
-    width: 200,
-  },
-  statusText: {
-    color: "#67E8F9",
-    fontSize: 15,
-    fontWeight: "500",
-    opacity: 0.8,
+    flex: 1,
+    gap: 24,
+    width: "100%",
   },
   duration: {
-    color: "#E5E7EB",
-    fontSize: 22,
-    fontWeight: "300",
-    letterSpacing: 2,
+    color: "#64748B",
+    fontSize: 16,
+    fontWeight: "500",
     fontVariant: ["tabular-nums"],
+  },
+  
+  controlsContainer: {
+    width: "100%",
+    alignItems: "center",
+  },
+  deptSubInfo: {
+    color: "#94A3B8",
+    fontSize: 14,
+    fontWeight: "500",
+    marginBottom: 20,
   },
   controls: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 24,
+    backgroundColor: "#FFFFFF",
+    paddingVertical: 16,
+    paddingHorizontal: 32,
+    borderRadius: 999,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 24,
+    elevation: 6,
   },
   controlBtn: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#F1F5F9",
     alignItems: "center",
-    backgroundColor: "#111827",
-    borderRadius: 20,
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-    gap: 6,
-    minWidth: 90,
-    borderWidth: 1,
-    borderColor: "#1E293B",
+    justifyContent: "center",
   },
   controlBtnActive: {
-    backgroundColor: "#7F1D1D",
-    borderColor: "#991B1B",
+    backgroundColor: "#E2E8F0",
   },
-  controlBtnLabel: {
-    color: "#6B7280",
-    fontSize: 12,
-    fontWeight: "600",
+  controlBtnDisabled: {
+    opacity: 0.5,
   },
-  controlBtnLabelActive: {
-    color: "#FCA5A5",
-  },
-  endBtn: {
+  endBtnMain: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "#3B82F6",
     alignItems: "center",
-    backgroundColor: "#DC2626",
-    borderRadius: 20,
-    paddingHorizontal: 28,
-    paddingVertical: 16,
-    gap: 6,
-    minWidth: 110,
-    shadowColor: "#DC2626",
+    justifyContent: "center",
+    shadowColor: "#3B82F6",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 8,
   },
-  controlBtnDisabled: {
-    opacity: 0.4,
-  },
-  controlBtnLabelDisabled: {
-    color: "#475569",
-  },
-  endBtnLabel: {
-    color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "700",
-  },
+
   errorContainer: {
     flex: 1,
+    backgroundColor: "#F8FAFC",
     alignItems: "center",
     justifyContent: "center",
-    padding: 32,
-    backgroundColor: "#0B0F1A",
-    gap: 20,
+    padding: 24,
   },
   errorText: {
-    color: "#6B7280",
+    color: "#64748B",
+    fontSize: 16,
     textAlign: "center",
-    fontSize: 15,
-    lineHeight: 22,
+    marginBottom: 24,
+    lineHeight: 24,
   },
   backBtn: {
-    backgroundColor: "#06B6D4",
-    paddingHorizontal: 28,
-    paddingVertical: 12,
+    backgroundColor: "#1E293B",
+    paddingHorizontal: 24,
+    paddingVertical: 14,
     borderRadius: 12,
   },
   backBtnText: {
-    color: "#0B0F1A",
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "600",
   },
 });
