@@ -18,7 +18,8 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Effi India needs microphone access to let you speak with the municipal services AI agent.",
         "NSCameraUsageDescription": "Effi India needs camera access for video calls."
-      }
+      },
+      "bitcode": false
     },
     "android": {
       "package": "com.effiindia.app",
@@ -33,7 +34,15 @@
         "RECORD_AUDIO",
         "MODIFY_AUDIO_SETTINGS",
         "INTERNET",
-        "ACCESS_NETWORK_STATE"
+        "ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WAKE_LOCK",
+        "android.permission.BLUETOOTH"
       ]
     },
     "web": {
@@ -48,8 +57,13 @@
           }
         }
       ],
-      "@config-plugins/react-native-webrtc",
       "expo-router"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "81cffe85-29ab-45a5-a4c7-614295640b39"
+      }
+    }
   }
 }
