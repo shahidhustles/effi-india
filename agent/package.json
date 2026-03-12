@@ -7,7 +7,8 @@
     "dev": "node --env-file=.env.local --experimental-vm-modules --import tsx/esm src/agent.ts dev",
     "download-files": "node --env-file=.env.local --experimental-vm-modules --import tsx/esm src/agent.ts download-files",
     "build": "tsc",
-    "start": "node dist/agent.js dev"
+    "start": "node dist/agent.js dev",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@livekit/agents": "^1.0.48",
@@ -17,10 +18,12 @@
     "@livekit/agents-plugin-openai": "^1.0.48",
     "@livekit/agents-plugin-silero": "^1.0.48",
     "@livekit/noise-cancellation-node": "^0.1.9",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "patch-package": "^8.0.1",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
   }

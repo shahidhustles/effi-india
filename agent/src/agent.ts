@@ -36,6 +36,13 @@ const CARTESIA_VOICE_ID =
   process.env.CARTESIA_VOICE_ID ??
   "79a125e8-cd45-4c13-8a67-188112f4dd22";
 
+// ─── Cartesia-supported language codes ────────────────────────────────────────
+// Sonic-3 supports these Indian languages. If Deepgram detects a language not
+// in this set we fall back to Hindi ('hi') since the voice is Indian.
+const CARTESIA_SUPPORTED_LANGS = new Set([
+  "en", "hi", "ta", "te", "kn", "ml", "gu", "pa", "bn", "mr",
+]);
+
 // ─── Department display names ──────────────────────────────────────────────────
 
 const DEPT_NAMES: Record<Department, string> = {
@@ -250,11 +257,26 @@ export default defineAgent({
     });
 
     // ── Event listeners ───────────────────────────────────────────────────────
+
+    // Dynamic TTS language switching: when Deepgram detects a language on a
+    // final transcript (thanks to the patch that extracts json["language"]),
+    // update Cartesia TTS so it uses the correct phoneme rules for that language.
+    let currentTtsLang = "hi";
     session.on(AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       if (ev.transcript.trim()) {
         console.log(
-          `[citizen → agent] "${ev.transcript}" (final: ${ev.isFinal})`,
+          `[citizen → agent] "${ev.transcript}" (lang: ${ev.language}, final: ${ev.isFinal})`,
         );
+      }
+
+      if (ev.isFinal && ev.language && ev.language !== "multi") {
+        const detected = ev.language.split("-")[0]; // "en-US" → "en"
+        const lang = CARTESIA_SUPPORTED_LANGS.has(detected) ? detected : "hi";
+        if (lang !== currentTtsLang) {
+          currentTtsLang = lang;
+          tts.updateOptions({ language: lang });
+          console.log(`[agent] TTS language switched to: ${lang}`);
+        }
       }
     });
 
