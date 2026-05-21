@@ -5,201 +5,176 @@ import {
   WorkerOptions,
   cli,
   defineAgent,
-  llm,
   voice,
 } from "@livekit/agents";
-
-const { AgentSessionEventTypes } = voice;
 import * as deepgram from "@livekit/agents-plugin-deepgram";
 import * as cartesia from "@livekit/agents-plugin-cartesia";
 import * as openai from "@livekit/agents-plugin-openai";
 import * as silero from "@livekit/agents-plugin-silero";
 import { BackgroundVoiceCancellation } from "@livekit/noise-cancellation-node";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
+import { buildOpeningInstructions, buildSystemPrompt } from "./prompts.js";
+import { createComplaintTools } from "./tools.js";
+import type {
+  ComplaintCategory,
+  RoomMetadata,
+  SessionState,
+  TranscriptSpeaker,
+  TranscriptTurn,
+} from "./types.js";
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+const { AgentSessionEventTypes } = voice;
 
-type Department = "MUNICIPAL" | "WATER" | "ELECTRICITY";
-
-interface RoomMetadata {
-  department: Department;
-  language?: string; // optional hint, not enforced
-}
-
-// ─── Cartesia voice ID ────────────────────────────────────────────────────────
-// Use the Indian Hindi voice from env — gives an Indian accent across all
-// Indian languages. sonic-3 supports hi, ta, mr, bn, te, gu, kn, ml, pa etc.
-// CARTESIA_HINDI_VOICE_ID should be an Indian voice from https://play.cartesia.ai
 const CARTESIA_VOICE_ID =
   process.env.CARTESIA_HINDI_VOICE_ID ??
   process.env.CARTESIA_VOICE_ID ??
   "79a125e8-cd45-4c13-8a67-188112f4dd22";
 
-// ─── Cartesia-supported language codes ────────────────────────────────────────
-// Sonic-3 supports these Indian languages. If Deepgram detects a language not
-// in this set we fall back to Hindi ('hi') since the voice is Indian.
 const CARTESIA_SUPPORTED_LANGS = new Set([
-  "en", "hi", "ta", "te", "kn", "ml", "gu", "pa", "bn", "mr",
+  "en",
+  "hi",
+  "ta",
+  "te",
+  "kn",
+  "ml",
+  "gu",
+  "pa",
+  "bn",
+  "mr",
 ]);
 
-// ─── Department display names ──────────────────────────────────────────────────
-
-const DEPT_NAMES: Record<Department, string> = {
-  MUNICIPAL: "Municipal Services",
-  WATER: "Water & Sanitation",
-  ELECTRICITY: "Electricity",
+const CATEGORY_NAMES: Record<ComplaintCategory, string> = {
+  SANITATION: "Sanitation and Garbage",
+  POTHOLE: "Pothole and Road Damage",
+  POWER_OUTAGE: "Power Outage",
 };
 
-// ─── System prompt factory ────────────────────────────────────────────────────
+function parseSessionMetadata(metadata: string | undefined): RoomMetadata {
+  if (!metadata) {
+    return { category: "SANITATION", language: "en" };
+  }
 
-function buildSystemPrompt(department: Department): string {
-  const deptName = DEPT_NAMES[department];
-
-  return `You are Effi, an AI voice assistant for Indian municipal services, working for the ${deptName} department.
-
-LANGUAGE RULE (highest priority — follow this above everything else):
-- Automatically detect the language the citizen is speaking and respond in that EXACT same language.
-- You support ALL languages including but not limited to: Hindi, English, Tamil, Bengali, Telugu, Gujarati, Kannada, Malayalam, Marathi, Punjabi, Odia, Assamese, Urdu, and any other language the citizen uses.
-- If the citizen switches languages mid-conversation, switch immediately with them.
-- If the citizen uses Hinglish (mixed Hindi + English), respond in Hinglish.
-- NEVER tell the citizen you only support certain languages. You support whatever language they speak.
-- NEVER respond in a language the citizen did not use.
-
-VOICE RULES (critical for voice UX):
-- Keep every response SHORT — 1 to 3 sentences maximum.
-- No bullet points, no lists, no markdown, no emojis.
-- Speak naturally as if on a phone call.
-
-YOUR JOB:
-Help citizens of India report civic problems to the ${deptName} department.
-${getDepartmentProblems(department)}
-
-CONVERSATION FLOW:
-1. Greet warmly and ask what problem they want to report. (1 sentence)
-2. Listen, then ask for their location or address. (1 sentence)
-3. Optionally ask for their name if they haven't given it.
-4. Confirm the complaint back to them in one sentence.
-5. Tell them their complaint has been registered and they will receive follow-up.
-6. End the call warmly.
-
-TOOLS:
-- Use the "registerComplaint" tool once you have: problem description AND location.
-- Do NOT call the tool until you have both pieces of information.
-- After calling the tool, confirm to the citizen with the ticket number returned.
-
-IMPORTANT:
-- You represent the government. Be respectful, patient, and professional.
-- If the citizen is upset, acknowledge their frustration first before asking questions.
-- If you don't understand, ask them to repeat — never guess.
-- Never promise specific timelines you can't guarantee.`;
-}
-
-function getDepartmentProblems(dept: Department): string {
-  const problems: Record<Department, string> = {
-    MUNICIPAL:
-      "Potholes and road damage, garbage collection, broken streetlights, stray animals, drainage blockage, illegal encroachment.",
-    WATER:
-      "Water supply outages, pipe leaks, billing disputes, water contamination, low water pressure, new connection requests.",
-    ELECTRICITY:
-      "Power outages, billing disputes, meter faults, dangerous wires, transformer issues, new connection requests.",
-  };
-  return problems[dept];
-}
-
-// ─── LLM tool — registerComplaint ────────────────────────────────────────────
-
-const registerComplaint = llm.tool({
-  description:
-    "Register a citizen complaint after collecting their problem description and location. Call this only once you have both the problem and location.",
-  parameters: z.object({
-    problemType: z
-      .string()
-      .describe(
-        "Short slug describing the problem, e.g. pothole, power_outage, pipe_leak",
-      ),
-    description: z
-      .string()
-      .describe("Brief description of the complaint in the citizen language"),
-    location: z
-      .string()
-      .describe("Address or location of the problem as stated by the citizen"),
-    callerName: z
-      .string()
-      .optional()
-      .describe("Name of the citizen if provided"),
-    language: z
-      .string()
-      .describe("Detected language code of the conversation, e.g. hi, en, ta"),
-  }),
-  execute: async ({
-    problemType,
-    description,
-    location,
-    callerName,
-    language,
-  }) => {
-    // Generate a simple ticket number for demo purposes.
-    // In the full system, this would insert into Supabase and return the real ticket ID.
-    const ticketId = `EFF-${Date.now().toString(36).toUpperCase()}`;
-
-    console.log("[agent] Complaint registered:", {
-      ticketId,
-      problemType,
-      description,
-      location,
-      callerName,
-      language,
-      timestamp: new Date().toISOString(),
-    });
-
+  try {
+    const parsed = JSON.parse(metadata) as Partial<RoomMetadata>;
     return {
-      ticketId,
-      message: `Complaint registered successfully. Ticket ID: ${ticketId}`,
+      category: parsed.category ?? "SANITATION",
+      language: parsed.language ?? "en",
     };
-  },
-});
+  } catch {
+    return { category: "SANITATION", language: "en" };
+  }
+}
 
-// ─── Agent definition ─────────────────────────────────────────────────────────
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function normalizeTranscriptSpeaker(role: unknown, type: unknown): TranscriptSpeaker {
+  if (role === "user") {
+    return "citizen";
+  }
+  if (role === "assistant") {
+    return "agent";
+  }
+  if (role === "system") {
+    return "system";
+  }
+  if (type === "function_call" || type === "function_call_output") {
+    return "tool";
+  }
+  return "unknown";
+}
+
+function extractTranscriptContent(item: Record<string, unknown>): string {
+  const content = item.content;
+  if (Array.isArray(content)) {
+    const parts = content
+      .flatMap((part) => {
+        if (!isRecord(part)) {
+          return [];
+        }
+
+        const values = [part.text, part.transcript]
+          .filter((value): value is string => typeof value === "string")
+          .map((value) => value.trim())
+          .filter(Boolean);
+
+        return values;
+      })
+      .filter(Boolean);
+
+    if (parts.length > 0) {
+      return parts.join(" ").trim();
+    }
+  }
+
+  if (item.type === "function_call") {
+    const name = typeof item.name === "string" ? item.name : "tool_call";
+    const args = typeof item.arguments === "string" ? item.arguments : "";
+    return args ? `${name} ${args}` : name;
+  }
+
+  if (item.type === "function_call_output" && typeof item.output === "string") {
+    return item.output.trim();
+  }
+
+  return "";
+}
+
+function normalizeTranscriptTurn(item: unknown, turnIndex: number): TranscriptTurn {
+  if (!isRecord(item)) {
+    return {
+      turnIndex,
+      speaker: "unknown",
+      content: "",
+      rawPayload: item,
+    };
+  }
+
+  return {
+    turnIndex,
+    speaker: normalizeTranscriptSpeaker(item.role, item.type),
+    content: extractTranscriptContent(item),
+    rawPayload: item,
+  };
+}
 
 export default defineAgent({
-  /**
-   * prewarm runs once per worker process at startup.
-   * We load the Silero VAD model here so it's ready when a call comes in.
-   */
   prewarm: async (proc: JobProcess) => {
-    console.log("[agent] Prewarming — loading Silero VAD model...");
+    console.log("[agent] Prewarming Silero VAD...");
     proc.userData.vad = await silero.VAD.load();
     console.log("[agent] Silero VAD ready");
   },
 
-  /**
-   * entry is called for every new room the agent joins.
-   */
   entry: async (ctx: JobContext) => {
-    // ── Parse room metadata ───────────────────────────────────────────────────
-    let department: Department = "MUNICIPAL";
-
-    try {
-      const meta: RoomMetadata = JSON.parse(ctx.room.metadata ?? "{}");
-      if (meta.department) department = meta.department;
-    } catch {
-      console.warn("[agent] Could not parse room metadata, using defaults");
-    }
-
-    console.log(`[agent] Joining room: ${ctx.room.name} | dept: ${department}`);
-
-    // ── Connect to the room ───────────────────────────────────────────────────
     await ctx.connect();
 
-    // ── Build the voice pipeline ──────────────────────────────────────────────
+    const participant = await ctx.waitForParticipant();
+    const sessionMetadata = parseSessionMetadata(
+      participant.metadata || ctx.room.metadata || undefined,
+    );
+    const state: SessionState = {
+      category: sessionMetadata.category,
+      language: sessionMetadata.language ?? "en",
+      callerName: null,
+      problemType: null,
+      description: null,
+      summary: null,
+      location: null,
+      photoUrl: null,
+      transcript: [],
+      citizenIdentity: participant.identity,
+    };
+
+    console.log(
+      `[agent] Joining room: ${ctx.room.name} | category: ${state.category}`,
+    );
+    console.log(
+      `[agent] Citizen participant connected: ${state.citizenIdentity}`,
+    );
+
     const vad = ctx.proc.userData.vad as silero.VAD;
 
-    // STT: nova-3 with language:'multi' enables Deepgram's multilingual
-    // codeswitching — auto-detects Hindi, Marathi, Tamil, English, etc.
-    // IMPORTANT: punctuate & smartFormat MUST be false for language=multi;
-    // Deepgram returns HTTP 400 if they're enabled with codeswitching.
-    // endpointing=100 is Deepgram's recommended value for multilingual streams.
     const stt = new deepgram.STT({
       model: "nova-3",
       language: "multi",
@@ -211,40 +186,27 @@ export default defineAgent({
       sampleRate: 16000,
     });
 
-    const lmm = new openai.LLM({
+    const llmModel = new openai.LLM({
       model: "openai/gpt-4o",
       baseURL: "https://ai-gateway.vercel.sh/v1",
       apiKey: process.env.VERCEL_AI_GATEWAY_API_KEY,
-      temperature: 0.7,
+      temperature: 0.4,
     });
 
-    // TTS: sonic-3 is Cartesia's multilingual model supporting all major Indian
-    // languages: hi, ta, mr, bn, te, gu, kn, ml, pa, and also en.
-    // Using CARTESIA_HINDI_VOICE_ID (Indian voice) with language:'hi' ensures:
-    //   • Hindi/Marathi/Indian-language output sounds native.
-    //   • English output carries an Indian accent (desired for this app).
-    // NOTE: speed must be numeric for sonic-3 (string "normal" causes invalid JSON).
-    // Omitting speed entirely uses the default (1.0).
     const tts = new cartesia.TTS({
-      model: "sonic-3" as any,
+      model: "sonic-3" as never,
       voice: CARTESIA_VOICE_ID,
       language: "hi",
     });
 
-    // ── Build the agent ───────────────────────────────────────────────────────
     const agent = new voice.Agent({
-      instructions: buildSystemPrompt(department),
-      tools: { registerComplaint },
+      instructions: buildSystemPrompt(state.category),
+      tools: createComplaintTools({ ctx, state }),
     });
 
-    // ── Create and start the session ──────────────────────────────────────────
-    // turnDetection: 'vad' — Silero VAD handles turn boundaries purely from
-    // audio energy. This avoids the MultilingualModel issue where 'multi' is
-    // not a real language code, causing "Language multi not supported" warnings.
-    // VAD-based detection is language-agnostic and works for all Indian languages.
     const session = new voice.AgentSession({
       stt,
-      llm: lmm,
+      llm: llmModel,
       tts,
       vad,
       turnDetection: "vad",
@@ -256,12 +218,8 @@ export default defineAgent({
       },
     });
 
-    // ── Event listeners ───────────────────────────────────────────────────────
-
-    // Dynamic TTS language switching: when Deepgram detects a language on a
-    // final transcript (thanks to the patch that extracts json["language"]),
-    // update Cartesia TTS so it uses the correct phoneme rules for that language.
     let currentTtsLang = "hi";
+
     session.on(AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       if (ev.transcript.trim()) {
         console.log(
@@ -270,14 +228,25 @@ export default defineAgent({
       }
 
       if (ev.isFinal && ev.language && ev.language !== "multi") {
-        const detected = ev.language.split("-")[0]; // "en-US" → "en"
-        const lang = CARTESIA_SUPPORTED_LANGS.has(detected) ? detected : "hi";
-        if (lang !== currentTtsLang) {
-          currentTtsLang = lang;
-          tts.updateOptions({ language: lang });
-          console.log(`[agent] TTS language switched to: ${lang}`);
+        const detected = ev.language.split("-")[0];
+        state.language = detected;
+
+        const cartesiaLanguage = CARTESIA_SUPPORTED_LANGS.has(detected)
+          ? detected
+          : "hi";
+
+        if (cartesiaLanguage !== currentTtsLang) {
+          currentTtsLang = cartesiaLanguage;
+          tts.updateOptions({ language: cartesiaLanguage });
+          console.log(`[agent] TTS language switched to: ${cartesiaLanguage}`);
         }
       }
+    });
+
+    session.on(AgentSessionEventTypes.ConversationItemAdded, (ev) => {
+      state.transcript.push(
+        normalizeTranscriptTurn(ev.item as unknown, state.transcript.length),
+      );
     });
 
     session.on(AgentSessionEventTypes.AgentStateChanged, (ev) => {
@@ -288,7 +257,6 @@ export default defineAgent({
       console.error("[agent] Session error:", ev.error);
     });
 
-    // ── Start the session ─────────────────────────────────────────────────────
     await session.start({
       agent,
       room: ctx.room,
@@ -302,19 +270,15 @@ export default defineAgent({
       },
     });
 
-    // ── Opening greeting ──────────────────────────────────────────────────────
-    // Greet in English — a neutral, universally understood opener.
-    // The agent will immediately switch to the citizen's language on their
-    // first utterance, per the LANGUAGE RULE in the system prompt.
     await session.generateReply({
-      instructions: `Greet the citizen warmly and briefly. Say you are Effi, a ${DEPT_NAMES[department]} assistant. Ask what problem they want to report. Keep it to ONE sentence. Speak in English.`,
+      instructions: buildOpeningInstructions(state.category, state.language),
     });
 
-    console.log(`[agent] Session live for room: ${ctx.room.name}`);
+    console.log(
+      `[agent] Session live for room: ${ctx.room.name} | category: ${CATEGORY_NAMES[state.category]}`,
+    );
   },
 });
-
-// ─── Worker entry point ────────────────────────────────────────────────────────
 
 cli.runApp(
   new WorkerOptions({

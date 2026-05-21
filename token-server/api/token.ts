@@ -4,9 +4,9 @@ import { v4 as uuidv4 } from "uuid";
 import { z } from "zod";
 
 const TokenRequestSchema = z.object({
-  department: z
-    .enum(["MUNICIPAL", "WATER", "ELECTRICITY"])
-    .default("MUNICIPAL"),
+  category: z
+    .enum(["SANITATION", "POTHOLE", "POWER_OUTAGE"])
+    .default("SANITATION"),
   language: z.string().default("en"),
   callerName: z.string().optional(),
 });
@@ -14,7 +14,6 @@ const TokenRequestSchema = z.object({
 const { LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET } = process.env;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS — allow the Expo app (any origin for now; tighten if needed)
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -41,20 +40,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .json({ error: "Invalid request", details: parsed.error.flatten() });
   }
 
-  const { department, language, callerName } = parsed.data;
+  const { category, language, callerName } = parsed.data;
 
-  const roomName = `effi-${department.toLowerCase()}-${language}-${uuidv4().slice(0, 8)}`;
+  const roomName = `effi-${category.toLowerCase()}-${language}-${uuidv4().slice(0, 8)}`;
   const participantIdentity = `citizen-${uuidv4().slice(0, 8)}`;
   const participantName = callerName ?? "Citizen";
 
-  const at = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
+  const token = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
     identity: participantIdentity,
     name: participantName,
-    metadata: JSON.stringify({ department, language }),
+    metadata: JSON.stringify({ category, language }),
     ttl: "10m",
   });
 
-  at.addGrant({
+  token.addGrant({
     roomJoin: true,
     room: roomName,
     canPublish: true,
@@ -62,13 +61,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     canPublishData: true,
   });
 
-  const token = await at.toJwt();
-
   return res.json({
-    token,
+    token: await token.toJwt(),
     roomName,
     serverUrl: LIVEKIT_URL,
-    department,
+    category,
     language,
   });
 }

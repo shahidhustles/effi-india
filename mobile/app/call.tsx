@@ -20,22 +20,18 @@ import {
   type AgentState,
 } from "@livekit/react-native";
 import { ConnectionState } from "livekit-client";
-import { useSharedValue, useDerivedValue, withRepeat, withTiming, Easing } from "react-native-reanimated";
+import {
+  useSharedValue,
+  useDerivedValue,
+  withRepeat,
+  withTiming,
+  Easing,
+} from "react-native-reanimated";
 import { Canvas, Path, Skia, BlurMask } from "@shopify/react-native-skia";
-import type { DepartmentId } from "../constants/config";
-import { DEPARTMENTS } from "../constants/config";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface CallParams {
-  token: string;
-  serverUrl: string;
-  roomName: string;
-  department: DepartmentId;
-  language: string;
-}
-
-// ─── Glowing Wave Visualizer ──────────────────────────────────────────────────
+import {
+  COMPLAINT_CATEGORIES,
+  type ComplaintCategoryId,
+} from "../constants/config";
 
 const VIS_WIDTH = 320;
 const VIS_HEIGHT = 150;
@@ -56,7 +52,6 @@ function GlowWaveVisualizer({
     updateInterval: 40,
   });
 
-  // Bridge React state → Reanimated shared value
   const magShared = useSharedValue<number[]>(new Array(PTS).fill(0));
   const stateShared = useSharedValue<string>("disconnected");
 
@@ -68,57 +63,63 @@ function GlowWaveVisualizer({
     stateShared.value = agentState ?? "disconnected";
   }, [agentState, stateShared]);
 
-  // Phase animation on UI thread (60fps, no React re-renders)
   const phase = useSharedValue(0);
   useEffect(() => {
     phase.value = withRepeat(
       withTiming(Math.PI * 2, { duration: 3000, easing: Easing.linear }),
-      -1
+      -1,
     );
   }, [phase]);
 
-  // Build wave path on UI thread each frame
   const wavePath = useDerivedValue(() => {
-    const p = Skia.Path.Make();
+    const path = Skia.Path.Make();
     const mags = magShared.value;
     const state = stateShared.value;
     const ph = phase.value;
 
     const stateAmp =
-      state === "thinking" ? 1.8 : state === "listening" ? 1.4 : state === "speaking" ? 1.0 : 0.3;
+      state === "thinking"
+        ? 1.8
+        : state === "listening"
+          ? 1.4
+          : state === "speaking"
+            ? 1.0
+            : 0.3;
 
     const ys: number[] = [];
-    for (let i = 0; i < PTS; i++) {
+    for (let i = 0; i < PTS; i += 1) {
       const xNorm = i / (PTS - 1);
-      // Edge taper: 0 at edges, 1 at center — gives the ribbon shape
       const taper = Math.sin(xNorm * Math.PI);
       const sine = Math.sin(xNorm * Math.PI * 2.5 - ph) * 25 * taper;
 
-      let y: number;
+      let y = MID_Y + sine * stateAmp;
       if (state === "speaking") {
         const mag = mags[i] ?? 0;
         y = MID_Y + sine * 0.4 + mag * 55 * taper;
-      } else {
-        y = MID_Y + sine * stateAmp;
       }
       ys.push(y);
     }
 
-    // Smooth cubic bezier through control points
-    p.moveTo(0, ys[0]);
-    for (let i = 0; i < PTS - 1; i++) {
+    path.moveTo(0, ys[0] ?? MID_Y);
+    for (let i = 0; i < PTS - 1; i += 1) {
       const x0 = (i / (PTS - 1)) * VIS_WIDTH;
       const x1 = ((i + 1) / (PTS - 1)) * VIS_WIDTH;
       const cpx = (x0 + x1) / 2;
-      p.cubicTo(cpx, ys[i], cpx, ys[i + 1], x1, ys[i + 1]);
+      path.cubicTo(
+        cpx,
+        ys[i] ?? MID_Y,
+        cpx,
+        ys[i + 1] ?? MID_Y,
+        x1,
+        ys[i + 1] ?? MID_Y,
+      );
     }
 
-    return p;
+    return path;
   });
 
   return (
     <Canvas style={waveStyles.canvas}>
-      {/* Outer halo */}
       <Path
         path={wavePath}
         style="stroke"
@@ -128,8 +129,6 @@ function GlowWaveVisualizer({
       >
         <BlurMask blur={22} style="normal" />
       </Path>
-
-      {/* Mid glow */}
       <Path
         path={wavePath}
         style="stroke"
@@ -139,8 +138,6 @@ function GlowWaveVisualizer({
       >
         <BlurMask blur={8} style="normal" />
       </Path>
-
-      {/* Bright core */}
       <Path
         path={wavePath}
         style="stroke"
@@ -161,7 +158,7 @@ const waveStyles = StyleSheet.create({
   },
 });
 
-function CallUI({ department }: { department: DepartmentId }) {
+function CallUI({ category }: { category: ComplaintCategoryId }) {
   const router = useRouter();
   const { state: agentState, audioTrack } = useVoiceAssistant();
   const { localParticipant } = useLocalParticipant();
@@ -171,55 +168,63 @@ function CallUI({ department }: { department: DepartmentId }) {
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  const dept = DEPARTMENTS.find((d) => d.id === department) ?? DEPARTMENTS[0];
+  const categoryInfo =
+    COMPLAINT_CATEGORIES.find((entry) => entry.id === category) ??
+    COMPLAINT_CATEGORIES[0];
 
-  // Explicitly enable mic once connected.
   useEffect(() => {
-    if (connectionState !== ConnectionState.Connected) return;
-    if (!localParticipant) return;
-    localParticipant.setMicrophoneEnabled(true).catch((e) => {
-      console.warn("[call] Failed to enable mic:", e);
+    if (connectionState !== ConnectionState.Connected || !localParticipant) {
+      return;
+    }
+
+    localParticipant.setMicrophoneEnabled(true).catch((error) => {
+      console.warn("[call] Failed to enable mic:", error);
     });
   }, [connectionState, localParticipant]);
 
-  // Timer
   useEffect(() => {
-    if (connectionState !== ConnectionState.Connected) return;
-    const interval = setInterval(() => setCallDuration((s) => s + 1), 1000);
+    if (connectionState !== ConnectionState.Connected) {
+      return;
+    }
+
+    const interval = setInterval(() => setCallDuration((value) => value + 1), 1000);
     return () => clearInterval(interval);
   }, [connectionState]);
 
   const formatDuration = (seconds: number) => {
-    const m = Math.floor(seconds / 60)
+    const minutes = Math.floor(seconds / 60)
       .toString()
       .padStart(2, "0");
-    const s = (seconds % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
+    const secs = (seconds % 60).toString().padStart(2, "0");
+    return `${minutes}:${secs}`;
   };
 
   const toggleMute = useCallback(async () => {
-    if (!localParticipant) return;
+    if (!localParticipant) {
+      return;
+    }
+
     try {
       await localParticipant.setMicrophoneEnabled(isMuted);
       setIsMuted(!isMuted);
-    } catch (e) {
-      console.warn("Mute toggle failed:", e);
+    } catch (error) {
+      console.warn("[call] Mute toggle failed:", error);
     }
-  }, [localParticipant, isMuted]);
+  }, [isMuted, localParticipant]);
 
   const toggleSpeaker = useCallback(async () => {
     try {
-      const next = !isSpeakerOn;
+      const nextValue = !isSpeakerOn;
       if (Platform.OS === "ios") {
         await AudioSession.selectAudioOutput(
-          next ? "force_speaker" : "default",
+          nextValue ? "force_speaker" : "default",
         );
       } else {
-        await AudioSession.selectAudioOutput(next ? "speaker" : "earpiece");
+        await AudioSession.selectAudioOutput(nextValue ? "speaker" : "earpiece");
       }
-      setIsSpeakerOn(next);
-    } catch (e) {
-      console.warn("Speaker toggle failed:", e);
+      setIsSpeakerOn(nextValue);
+    } catch (error) {
+      console.warn("[call] Speaker toggle failed:", error);
     }
   }, [isSpeakerOn]);
 
@@ -252,7 +257,6 @@ function CallUI({ department }: { department: DepartmentId }) {
 
   return (
     <View style={styles.container}>
-      {/* Top bar */}
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.iconBtn} onPress={endCall}>
           <Ionicons name="chevron-back" size={24} color="#0F172A" />
@@ -263,11 +267,8 @@ function CallUI({ department }: { department: DepartmentId }) {
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.greetingText}>
-        {getStatusLabel(agentState)}
-      </Text>
+      <Text style={styles.greetingText}>{getStatusLabel(agentState)}</Text>
 
-      {/* Glowing wave visualizer */}
       <View style={styles.visualizerContainer}>
         <GlowWaveVisualizer agentState={agentState} audioTrack={audioTrack} />
 
@@ -276,13 +277,9 @@ function CallUI({ department }: { department: DepartmentId }) {
         )}
       </View>
 
-      {/* Controls */}
       <View style={styles.controlsContainer}>
-        <Text style={styles.deptSubInfo}>
-          Connected to {dept.label}
-        </Text>
+        <Text style={styles.deptSubInfo}>Connected to {categoryInfo.label}</Text>
         <View style={styles.controls}>
-          {/* Mute button */}
           <TouchableOpacity
             style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
             onPress={toggleMute}
@@ -295,7 +292,6 @@ function CallUI({ department }: { department: DepartmentId }) {
             />
           </TouchableOpacity>
 
-          {/* End call */}
           <TouchableOpacity
             style={styles.endBtnMain}
             onPress={endCall}
@@ -304,14 +300,18 @@ function CallUI({ department }: { department: DepartmentId }) {
             <Ionicons name="close" size={32} color="#FFFFFF" />
           </TouchableOpacity>
 
-          {/* Speaker button */}
           <TouchableOpacity
             style={[
               styles.controlBtn,
               isSpeakerOn && styles.controlBtnActive,
-              connectionState !== ConnectionState.Connected && styles.controlBtnDisabled,
+              connectionState !== ConnectionState.Connected &&
+                styles.controlBtnDisabled,
             ]}
-            onPress={connectionState === ConnectionState.Connected ? toggleSpeaker : undefined}
+            onPress={
+              connectionState === ConnectionState.Connected
+                ? toggleSpeaker
+                : undefined
+            }
             activeOpacity={0.7}
           >
             <Ionicons
@@ -321,8 +321,8 @@ function CallUI({ department }: { department: DepartmentId }) {
                 connectionState !== ConnectionState.Connected
                   ? "#CBD5E1"
                   : isSpeakerOn
-                  ? "#3B82F6"
-                  : "#475569"
+                    ? "#3B82F6"
+                    : "#475569"
               }
             />
           </TouchableOpacity>
@@ -332,19 +332,13 @@ function CallUI({ department }: { department: DepartmentId }) {
   );
 }
 
-// ─── Screen root ───────────────────────────────────────────────────────────────
-
 export default function CallScreen() {
   const params = useLocalSearchParams<Record<string, string>>();
   const router = useRouter();
 
-  const { token, serverUrl, roomName, department, language } = params;
+  const { token, serverUrl, category } = params;
 
-  // Configure and start the audio session here, close to when the room
-  // connects. On Android this MUST be awaited in the correct order:
-  // configureAudio -> startAudioSession -> room.connect.
   useEffect(() => {
-    let stopped = false;
     const start = async () => {
       try {
         if (Platform.OS === "android") {
@@ -357,19 +351,19 @@ export default function CallScreen() {
         }
         await AudioSession.startAudioSession();
         console.log("[call] Audio session started");
-      } catch (e) {
-        console.warn("[call] Audio session start failed:", e);
+      } catch (error) {
+        console.warn("[call] Audio session start failed:", error);
       }
     };
+
     start();
     return () => {
-      stopped = true;
       AudioSession.stopAudioSession();
       console.log("[call] Audio session stopped");
     };
   }, []);
 
-  if (!token || !serverUrl) {
+  if (!token || !serverUrl || !category) {
     return (
       <View style={styles.errorContainer}>
         <Text style={styles.errorText}>
@@ -390,19 +384,17 @@ export default function CallScreen() {
       audio={true}
       video={false}
       onDisconnected={() => router.back()}
-      onError={(e) => {
-        console.error("LiveKit error:", e);
-        Alert.alert("Connection Error", e.message, [
+      onError={(error) => {
+        console.error("[call] LiveKit error:", error);
+        Alert.alert("Connection Error", error.message, [
           { text: "OK", onPress: () => router.back() },
         ]);
       }}
     >
-      <CallUI department={department as DepartmentId} />
+      <CallUI category={category as ComplaintCategoryId} />
     </LiveKitRoom>
   );
 }
-
-// ─── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: {
@@ -447,7 +439,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     lineHeight: 32,
   },
-
   visualizerContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -461,7 +452,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     fontVariant: ["tabular-nums"],
   },
-
   controlsContainer: {
     width: "100%",
     alignItems: "center",
@@ -514,30 +504,29 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
   },
-
   errorContainer: {
     flex: 1,
     backgroundColor: "#F8FAFC",
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
+    paddingHorizontal: 24,
   },
   errorText: {
-    color: "#64748B",
+    color: "#0F172A",
     fontSize: 16,
     textAlign: "center",
-    marginBottom: 24,
     lineHeight: 24,
+    marginBottom: 20,
   },
   backBtn: {
-    backgroundColor: "#1E293B",
-    paddingHorizontal: 24,
+    backgroundColor: "#3B82F6",
+    paddingHorizontal: 20,
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 16,
   },
   backBtnText: {
     color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

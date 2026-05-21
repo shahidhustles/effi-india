@@ -1,23 +1,30 @@
 import { useState, useCallback } from "react";
-import { AGENT_API_URL, type DepartmentId } from "../constants/config";
+import {
+  AGENT_API_URL,
+  type ComplaintCategoryId,
+} from "../constants/config";
 
 export interface ConnectionDetails {
   token: string;
   serverUrl: string;
   roomName: string;
-  department: DepartmentId;
+  category: ComplaintCategoryId;
   language: string;
 }
 
 export type ConnectionState = "idle" | "fetching" | "ready" | "error";
 
 export function useConnection() {
-  const [connectionDetails, setConnectionDetails] = useState<ConnectionDetails | null>(null);
+  const [connectionDetails, setConnectionDetails] =
+    useState<ConnectionDetails | null>(null);
   const [state, setState] = useState<ConnectionState>("idle");
   const [error, setError] = useState<string | null>(null);
 
   const connect = useCallback(
-    async (department: DepartmentId, language: string = "en"): Promise<ConnectionDetails | null> => {
+    async (
+      category: ComplaintCategoryId,
+      language: string = "en",
+    ): Promise<ConnectionDetails | null> => {
       setState("fetching");
       setError(null);
 
@@ -25,7 +32,7 @@ export function useConnection() {
         const response = await fetch(`${AGENT_API_URL}/token`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ department, language }),
+          body: JSON.stringify({ category, language }),
         });
 
         if (!response.ok) {
@@ -44,7 +51,7 @@ export function useConnection() {
         return null;
       }
     },
-    []
+    [],
   );
 
   const reset = useCallback(() => {

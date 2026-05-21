@@ -10,34 +10,39 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
-import { DEPARTMENTS, type DepartmentId } from "../constants/config";
+import {
+  COMPLAINT_CATEGORIES,
+  type ComplaintCategoryId,
+} from "../constants/config";
 import { useConnection } from "../hooks/useConnection";
 
 export default function HomeScreen() {
   const router = useRouter();
   const { connect, state } = useConnection();
 
-  const [selectedDept, setSelectedDept] = useState<DepartmentId>("MUNICIPAL");
+  const [selectedCategory, setSelectedCategory] =
+    useState<ComplaintCategoryId>("SANITATION");
 
   const isFetching = state === "fetching";
 
   async function handleStartCall() {
-    const details = await connect(selectedDept, "en");
+    const details = await connect(selectedCategory, "en");
     if (!details) {
       Alert.alert(
         "Connection Failed",
         "Could not reach the Effi server. Make sure the agent is running and AGENT_API_URL is correct.",
-        [{ text: "OK" }]
+        [{ text: "OK" }],
       );
       return;
     }
+
     router.push({
       pathname: "/call",
       params: {
         token: details.token,
         serverUrl: details.serverUrl,
         roomName: details.roomName,
-        department: details.department,
+        category: details.category,
         language: details.language,
       },
     });
@@ -45,7 +50,6 @@ export default function HomeScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.headerGreeting}>Hello,</Text>
         <Text style={styles.headerTitle}>Effi India</Text>
@@ -54,33 +58,34 @@ export default function HomeScreen() {
         </Text>
       </View>
 
-      {/* Department cards */}
-      <Text style={styles.sectionLabel}>Select Department</Text>
-      {DEPARTMENTS.map((dept) => {
-        const isSelected = selectedDept === dept.id;
+      <Text style={styles.sectionLabel}>Select Complaint Type</Text>
+      {COMPLAINT_CATEGORIES.map((entry) => {
+        const isSelected = selectedCategory === entry.id;
         return (
           <TouchableOpacity
-            key={dept.id}
+            key={entry.id}
             style={[
               styles.card,
-              isSelected && { borderColor: dept.color, borderWidth: 1.5 },
+              isSelected && { borderColor: entry.color, borderWidth: 1.5 },
             ]}
-            onPress={() => setSelectedDept(dept.id)}
+            onPress={() => setSelectedCategory(entry.id)}
             activeOpacity={0.7}
           >
-            <View style={[styles.cardIcon, { backgroundColor: dept.color + "15" }]}>
+            <View
+              style={[styles.cardIcon, { backgroundColor: `${entry.color}15` }]}
+            >
               <MaterialCommunityIcons
-                name={dept.iconName}
+                name={entry.iconName}
                 size={28}
-                color={dept.color}
+                color={entry.color}
               />
             </View>
             <View style={styles.cardBody}>
-              <Text style={styles.cardTitle}>{dept.label}</Text>
-              <Text style={styles.cardDesc}>{dept.description}</Text>
+              <Text style={styles.cardTitle}>{entry.label}</Text>
+              <Text style={styles.cardDesc}>{entry.description}</Text>
             </View>
             {isSelected && (
-              <View style={[styles.checkBadge, { backgroundColor: dept.color }]}>
+              <View style={[styles.checkBadge, { backgroundColor: entry.color }]}>
                 <Ionicons name="checkmark" size={14} color="#FFFFFF" />
               </View>
             )}
@@ -88,7 +93,6 @@ export default function HomeScreen() {
         );
       })}
 
-      {/* Call button */}
       <TouchableOpacity
         style={[styles.callBtn, isFetching && styles.callBtnDisabled]}
         onPress={handleStartCall}
@@ -105,9 +109,7 @@ export default function HomeScreen() {
         )}
       </TouchableOpacity>
 
-      <Text style={styles.footer}>
-        🇮🇳 Made in India
-      </Text>
+      <Text style={styles.footer}>🇮🇳 Made in India</Text>
     </ScrollView>
   );
 }
@@ -119,8 +121,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
     minHeight: "100%",
   },
-
-  // Header
   header: {
     marginBottom: 32,
   },
@@ -143,8 +143,6 @@ const styles = StyleSheet.create({
     fontWeight: "400",
     lineHeight: 24,
   },
-
-  // Section
   sectionLabel: {
     fontSize: 13,
     fontWeight: "600",
@@ -154,8 +152,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingLeft: 4,
   },
-
-  // Cards
   card: {
     flexDirection: "row",
     alignItems: "center",
@@ -201,8 +197,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginLeft: 12,
   },
-
-  // Call button
   callBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -228,8 +222,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "700",
   },
-
-  // Footer
   footer: {
     textAlign: "center",
     color: "#94A3B8",
