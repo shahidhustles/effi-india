@@ -1,176 +1,430 @@
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  View,
+  Alert,
+  FlatList,
+  Platform,
+  StyleSheet,
   Text,
   TouchableOpacity,
-  StyleSheet,
-  Alert,
-  Platform,
+  View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import AudioWaveView from "@kaannn/react-native-waveform";
+import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import {
-  LiveKitRoom,
-  useVoiceAssistant,
-  useLocalParticipant,
-  useConnectionState,
-  useMultibandTrackVolume,
   AudioSession,
   AndroidAudioTypePresets,
-  type AgentState,
+  LiveKitRoom,
+  useConnectionState,
+  useLocalParticipant,
+  useMultibandTrackVolume,
+  useRoomContext,
+  useVoiceAssistant,
 } from "@livekit/react-native";
-import { ConnectionState } from "livekit-client";
 import {
-  useSharedValue,
-  useDerivedValue,
-  withRepeat,
-  withTiming,
-  Easing,
-} from "react-native-reanimated";
-import { Canvas, Path, Skia, BlurMask } from "@shopify/react-native-skia";
+  ConnectionState,
+  RoomEvent,
+  RpcError,
+  Track,
+  type Participant,
+  type RpcInvocationData,
+  type TranscriptionSegment,
+} from "livekit-client";
 import {
   COMPLAINT_CATEGORIES,
   type ComplaintCategoryId,
 } from "../constants/config";
+import { uploadComplaintEvidence } from "../lib/supabase";
 
-const VIS_WIDTH = 320;
-const VIS_HEIGHT = 150;
-const MID_Y = VIS_HEIGHT / 2;
-const PTS = 12;
+const LOCATION_RPC_METHOD = "effi.provide_location";
+const PHOTO_RPC_METHOD = "effi.provide_photo";
+const WAVEFORM_BANDS = 12;
+const WAVEFORM_SAMPLE_COUNT = 48;
+const BASELINE_WAVEFORM = Array.from(
+  { length: WAVEFORM_SAMPLE_COUNT },
+  () => 8,
+);
 
-function GlowWaveVisualizer({
-  agentState,
-  audioTrack,
-}: {
-  agentState: AgentState | undefined;
-  audioTrack: ReturnType<typeof useVoiceAssistant>["audioTrack"];
-}) {
-  const magnitudes = useMultibandTrackVolume(audioTrack, {
-    bands: PTS,
-    minFrequency: 80,
-    maxFrequency: 8000,
-    updateInterval: 40,
-  });
+type TranscriptSender = "effi" | "citizen";
+type ActionRequestType = "location" | "photo";
+type ActionRequestStatus =
+  | "waiting"
+  | "running"
+  | "success"
+  | "denied"
+  | "cancelled"
+  | "error";
+type RpcToolStatus = "ok" | "denied" | "cancelled" | "error";
 
-  const magShared = useSharedValue<number[]>(new Array(PTS).fill(0));
-  const stateShared = useSharedValue<string>("disconnected");
+type TranscriptMessage = {
+  id: string;
+  sender: TranscriptSender;
+  text: string;
+  isStreaming: boolean;
+  transcriptionKey?: string;
+  actionRequest?: {
+    requestId: string;
+    type: ActionRequestType;
+    status: ActionRequestStatus;
+    buttonLabel: string;
+  };
+};
 
-  useEffect(() => {
-    magShared.value = [...magnitudes];
-  }, [magnitudes, magShared]);
+type RpcRequestPayload = {
+  requestId: string;
+  category: ComplaintCategoryId;
+  language: string;
+  reason: ActionRequestType;
+  prompt: string;
+};
 
-  useEffect(() => {
-    stateShared.value = agentState ?? "disconnected";
-  }, [agentState, stateShared]);
+type LocationRpcResult = {
+  status: RpcToolStatus;
+  message?: string;
+  location?: {
+    coords: {
+      latitude: number;
+      longitude: number;
+      accuracy: number | null;
+      altitude: number | null;
+      altitudeAccuracy: number | null;
+      heading: number | null;
+      speed: number | null;
+    };
+    timestamp: number;
+    mocked?: boolean;
+  };
+};
 
-  const phase = useSharedValue(0);
-  useEffect(() => {
-    phase.value = withRepeat(
-      withTiming(Math.PI * 2, { duration: 3000, easing: Easing.linear }),
-      -1,
-    );
-  }, [phase]);
+type PhotoRpcResult = {
+  status: RpcToolStatus;
+  message?: string;
+  photoUrl?: string;
+};
 
-  const wavePath = useDerivedValue(() => {
-    const path = Skia.Path.Make();
-    const mags = magShared.value;
-    const state = stateShared.value;
-    const ph = phase.value;
+type PendingRpcRequest = {
+  requestId: string;
+  type: ActionRequestType;
+  messageId: string;
+  resolveResponse: (payload: string) => void;
+};
 
-    const stateAmp =
-      state === "thinking"
-        ? 1.8
-        : state === "listening"
-          ? 1.4
-          : state === "speaking"
-            ? 1.0
-            : 0.3;
+function createMessageId(prefix: string): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
 
-    const ys: number[] = [];
-    for (let i = 0; i < PTS; i += 1) {
-      const xNorm = i / (PTS - 1);
-      const taper = Math.sin(xNorm * Math.PI);
-      const sine = Math.sin(xNorm * Math.PI * 2.5 - ph) * 25 * taper;
-
-      let y = MID_Y + sine * stateAmp;
-      if (state === "speaking") {
-        const mag = mags[i] ?? 0;
-        y = MID_Y + sine * 0.4 + mag * 55 * taper;
-      }
-      ys.push(y);
-    }
-
-    path.moveTo(0, ys[0] ?? MID_Y);
-    for (let i = 0; i < PTS - 1; i += 1) {
-      const x0 = (i / (PTS - 1)) * VIS_WIDTH;
-      const x1 = ((i + 1) / (PTS - 1)) * VIS_WIDTH;
-      const cpx = (x0 + x1) / 2;
-      path.cubicTo(
-        cpx,
-        ys[i] ?? MID_Y,
-        cpx,
-        ys[i + 1] ?? MID_Y,
-        x1,
-        ys[i + 1] ?? MID_Y,
-      );
-    }
-
-    return path;
-  });
-
-  return (
-    <Canvas style={waveStyles.canvas}>
-      <Path
-        path={wavePath}
-        style="stroke"
-        strokeWidth={28}
-        strokeCap="round"
-        color="rgba(30, 64, 175, 0.12)"
-      >
-        <BlurMask blur={22} style="normal" />
-      </Path>
-      <Path
-        path={wavePath}
-        style="stroke"
-        strokeWidth={10}
-        strokeCap="round"
-        color="rgba(59, 130, 246, 0.45)"
-      >
-        <BlurMask blur={8} style="normal" />
-      </Path>
-      <Path
-        path={wavePath}
-        style="stroke"
-        strokeWidth={2.5}
-        strokeCap="round"
-        color="rgba(191, 219, 254, 0.95)"
-      >
-        <BlurMask blur={1.5} style="solid" />
-      </Path>
-    </Canvas>
-  );
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-const waveStyles = StyleSheet.create({
-  canvas: {
-    width: VIS_WIDTH,
-    height: VIS_HEIGHT,
-  },
-});
+function normalizeForMatch(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.!?]+$/g, "");
+}
 
-function CallUI({ category }: { category: ComplaintCategoryId }) {
+function normalizeWaveSamples(values: number[]): number[] {
+  if (values.length === 0) {
+    return [];
+  }
+
+  return values.map((value) => {
+    const normalized = Math.max(0.08, Math.min(1, value));
+    return Math.round(normalized * 100);
+  });
+}
+
+function mergeWaveSamples(local: number[], remote: number[]): number[] {
+  const maxLength = Math.max(local.length, remote.length);
+  const merged = Array.from({ length: maxLength }, (_, index) =>
+    Math.max(local[index] ?? 0, remote[index] ?? 0),
+  );
+
+  return normalizeWaveSamples(merged);
+}
+
+function getActionButtonLabel(type: ActionRequestType): string {
+  return type === "location" ? "Mark Location" : "Add Photo";
+}
+
+function getActionStatusText(
+  type: ActionRequestType,
+  status: ActionRequestStatus,
+): string {
+  const noun = type === "location" ? "Location" : "Photo";
+
+  switch (status) {
+    case "running":
+      return `${noun} in progress...`;
+    case "success":
+      return `${noun} shared`;
+    case "denied":
+      return `${noun} permission denied`;
+    case "cancelled":
+      return `${noun} cancelled`;
+    case "error":
+      return `${noun} failed`;
+    default:
+      return getActionButtonLabel(type);
+  }
+}
+
+function isSuccessfulPickerResult(
+  result:
+    | ImagePicker.ImagePickerResult
+    | ImagePicker.ImagePickerErrorResult
+    | null,
+): result is ImagePicker.ImagePickerSuccessResult {
+  return Boolean(result && !("code" in result) && !result.canceled);
+}
+
+function CallUI({
+  category,
+  language,
+}: {
+  category: ComplaintCategoryId;
+  language: string;
+}) {
   const router = useRouter();
-  const { state: agentState, audioTrack } = useVoiceAssistant();
-  const { localParticipant } = useLocalParticipant();
+  const room = useRoomContext();
+  const flatListRef = useRef<FlatList<TranscriptMessage>>(null);
+  const { agent, audioTrack } = useVoiceAssistant();
+  const {
+    localParticipant,
+    microphoneTrack,
+    isMicrophoneEnabled,
+    lastMicrophoneError,
+  } = useLocalParticipant();
   const connectionState = useConnectionState();
 
-  const [isMuted, setIsMuted] = useState(false);
+  const [samples, setSamples] = useState<number[]>(BASELINE_WAVEFORM);
+  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
   const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
+
+  const pendingRpcRequestRef = useRef<PendingRpcRequest | null>(null);
 
   const categoryInfo =
     COMPLAINT_CATEGORIES.find((entry) => entry.id === category) ??
     COMPLAINT_CATEGORIES[0];
+
+  const localAudioTrackRef = useMemo(() => {
+    if (!microphoneTrack) {
+      return undefined;
+    }
+
+    return {
+      participant: localParticipant,
+      publication: microphoneTrack,
+      source: Track.Source.Microphone,
+    };
+  }, [localParticipant, microphoneTrack]);
+
+  const localMagnitudes = useMultibandTrackVolume(localAudioTrackRef, {
+    bands: WAVEFORM_BANDS,
+    minFrequency: 80,
+    maxFrequency: 8000,
+    updateInterval: 60,
+  });
+  const agentMagnitudes = useMultibandTrackVolume(audioTrack, {
+    bands: WAVEFORM_BANDS,
+    minFrequency: 80,
+    maxFrequency: 8000,
+    updateInterval: 60,
+  });
+
+  const updateMessageActionStatus = useCallback(
+    (requestId: string, status: ActionRequestStatus) => {
+      setMessages((current) =>
+        current.map((message) => {
+          if (message.actionRequest?.requestId !== requestId) {
+            return message;
+          }
+
+          return {
+            ...message,
+            actionRequest: {
+              ...message.actionRequest,
+              status,
+            },
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  const resolvePendingRequest = useCallback(
+    (
+      result: LocationRpcResult | PhotoRpcResult,
+      uiStatus: ActionRequestStatus,
+    ) => {
+      const pendingRequest = pendingRpcRequestRef.current;
+      if (!pendingRequest) {
+        return;
+      }
+
+      pendingRpcRequestRef.current = null;
+      updateMessageActionStatus(pendingRequest.requestId, uiStatus);
+      pendingRequest.resolveResponse(JSON.stringify(result));
+    },
+    [updateMessageActionStatus],
+  );
+
+  const attachActionRequestToTranscript = useCallback(
+    (payload: RpcRequestPayload, type: ActionRequestType) => {
+      const promptKey = normalizeForMatch(payload.prompt);
+      const actionRequest = {
+        requestId: payload.requestId,
+        type,
+        status: "waiting" as const,
+        buttonLabel: getActionButtonLabel(type),
+      };
+
+      let targetMessageId = createMessageId(`rpc-${type}`);
+
+      setMessages((current) => {
+        const next = [...current];
+        let targetIndex = -1;
+
+        for (let index = next.length - 1; index >= 0; index -= 1) {
+          const candidate = next[index];
+          if (candidate.sender !== "effi") {
+            continue;
+          }
+
+          const candidateText = normalizeForMatch(candidate.text);
+          if (
+            candidateText === promptKey ||
+            promptKey.includes(candidateText) ||
+            candidateText.includes(promptKey)
+          ) {
+            targetIndex = index;
+            break;
+          }
+        }
+
+        if (targetIndex === -1 && next.length > 0) {
+          const lastMessage = next[next.length - 1];
+          if (lastMessage.sender === "effi" && !lastMessage.actionRequest) {
+            targetIndex = next.length - 1;
+          }
+        }
+
+        if (targetIndex === -1) {
+          next.push({
+            id: targetMessageId,
+            sender: "effi",
+            text: payload.prompt,
+            isStreaming: false,
+            actionRequest,
+          });
+          return next;
+        }
+
+        targetMessageId = next[targetIndex]?.id ?? targetMessageId;
+        next[targetIndex] = {
+          ...next[targetIndex],
+          text: next[targetIndex]?.text || payload.prompt,
+          isStreaming: next[targetIndex]?.isStreaming ?? false,
+          actionRequest,
+        };
+
+        return next;
+      });
+
+      return targetMessageId;
+    },
+    [],
+  );
+
+  const upsertTranscriptSegment = useCallback(
+    (sender: TranscriptSender, segment: TranscriptionSegment) => {
+      const transcriptionKey = `${sender}:${segment.id}`;
+      const normalizedText = normalizeForMatch(segment.text);
+
+      setMessages((current) => {
+        const existingIndex = current.findIndex(
+          (message) => message.transcriptionKey === transcriptionKey,
+        );
+
+        if (existingIndex >= 0) {
+          const next = [...current];
+          next[existingIndex] = {
+            ...next[existingIndex],
+            text: segment.text,
+            isStreaming: !segment.final,
+          };
+          return next;
+        }
+
+        const next = [...current];
+        let attachIndex = -1;
+
+        if (sender === "effi") {
+          for (let index = next.length - 1; index >= 0; index -= 1) {
+            const candidate = next[index];
+            if (
+              candidate.sender !== "effi" ||
+              candidate.transcriptionKey ||
+              !candidate.actionRequest
+            ) {
+              continue;
+            }
+
+            const candidateText = normalizeForMatch(candidate.text);
+            if (
+              candidateText === normalizedText ||
+              candidateText.includes(normalizedText) ||
+              normalizedText.includes(candidateText)
+            ) {
+              attachIndex = index;
+              break;
+            }
+          }
+        }
+
+        if (attachIndex >= 0) {
+          next[attachIndex] = {
+            ...next[attachIndex],
+            text: segment.text,
+            isStreaming: !segment.final,
+            transcriptionKey,
+          };
+          return next;
+        }
+
+        next.push({
+          id: createMessageId(`transcript-${sender}`),
+          sender,
+          text: segment.text,
+          isStreaming: !segment.final,
+          transcriptionKey,
+        });
+        return next;
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected) {
+      setSamples(BASELINE_WAVEFORM);
+      return;
+    }
+
+    const merged = mergeWaveSamples(localMagnitudes, agentMagnitudes);
+    if (merged.length === 0) {
+      return;
+    }
+
+    setSamples((current) => [...current, ...merged].slice(-WAVEFORM_SAMPLE_COUNT));
+  }, [agentMagnitudes, connectionState, localMagnitudes]);
 
   useEffect(() => {
     if (connectionState !== ConnectionState.Connected || !localParticipant) {
@@ -187,17 +441,137 @@ function CallUI({ category }: { category: ComplaintCategoryId }) {
       return;
     }
 
-    const interval = setInterval(() => setCallDuration((value) => value + 1), 1000);
+    const interval = setInterval(() => {
+      setCallDuration((value) => value + 1);
+    }, 1000);
+
     return () => clearInterval(interval);
   }, [connectionState]);
 
-  const formatDuration = (seconds: number) => {
+  useEffect(() => {
+    if (lastMicrophoneError) {
+      Alert.alert("Microphone Error", lastMicrophoneError.message);
+    }
+  }, [lastMicrophoneError]);
+
+  useEffect(() => {
+    const handleTranscription = (
+      segments: TranscriptionSegment[],
+      participant?: Participant,
+    ) => {
+      if (!participant || segments.length === 0) {
+        return;
+      }
+
+      const sender: TranscriptSender | null = participant.isLocal
+        ? "citizen"
+        : participant.identity === agent?.identity
+          ? "effi"
+          : null;
+
+      if (!sender) {
+        return;
+      }
+
+      segments.forEach((segment) => {
+        if (segment.text.trim()) {
+          upsertTranscriptSegment(sender, segment);
+        }
+      });
+    };
+
+    room.on(RoomEvent.TranscriptionReceived, handleTranscription);
+    return () => {
+      room.off(RoomEvent.TranscriptionReceived, handleTranscription);
+    };
+  }, [agent?.identity, room, upsertTranscriptSegment]);
+
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected) {
+      return;
+    }
+
+    const handleRpcRequest = async (
+      expectedType: ActionRequestType,
+      data: RpcInvocationData,
+    ) => {
+      if (pendingRpcRequestRef.current) {
+        return JSON.stringify({
+          status: "error",
+          message: "Another tool request is already active on this device.",
+        } satisfies PhotoRpcResult | LocationRpcResult);
+      }
+
+      try {
+        const payload = JSON.parse(data.payload) as RpcRequestPayload;
+        if (
+          !payload ||
+          payload.reason !== expectedType ||
+          !payload.requestId ||
+          !payload.prompt
+        ) {
+          throw new RpcError(
+            RpcError.ErrorCode.APPLICATION_ERROR,
+            "Malformed RPC request payload.",
+          );
+        }
+
+        const messageId = attachActionRequestToTranscript(payload, expectedType);
+        return await new Promise<string>((resolve) => {
+          pendingRpcRequestRef.current = {
+            requestId: payload.requestId,
+            type: expectedType,
+            messageId,
+            resolveResponse: resolve,
+          };
+        });
+      } catch (error) {
+        return JSON.stringify({
+          status: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Could not start the requested action.",
+        } satisfies PhotoRpcResult | LocationRpcResult);
+      }
+    };
+
+    room.registerRpcMethod(LOCATION_RPC_METHOD, (data) =>
+      handleRpcRequest("location", data),
+    );
+    room.registerRpcMethod(PHOTO_RPC_METHOD, (data) =>
+      handleRpcRequest("photo", data),
+    );
+
+    return () => {
+      room.unregisterRpcMethod(LOCATION_RPC_METHOD);
+      room.unregisterRpcMethod(PHOTO_RPC_METHOD);
+    };
+  }, [attachActionRequestToTranscript, connectionState, room]);
+
+  useEffect(() => {
+    return () => {
+      resolvePendingRequest(
+        {
+          status: "error",
+          message: "The call ended before the requested action was completed.",
+        },
+        "error",
+      );
+    };
+  }, [resolvePendingRequest]);
+
+  useEffect(() => {
+    flatListRef.current?.scrollToEnd({ animated: true });
+  }, [messages]);
+
+  const formatDuration = useCallback((seconds: number) => {
     const minutes = Math.floor(seconds / 60)
       .toString()
       .padStart(2, "0");
-    const secs = (seconds % 60).toString().padStart(2, "0");
-    return `${minutes}:${secs}`;
-  };
+    const remainingSeconds = (seconds % 60).toString().padStart(2, "0");
+    return `${minutes}:${remainingSeconds}`;
+  }, []);
 
   const toggleMute = useCallback(async () => {
     if (!localParticipant) {
@@ -205,12 +579,11 @@ function CallUI({ category }: { category: ComplaintCategoryId }) {
     }
 
     try {
-      await localParticipant.setMicrophoneEnabled(isMuted);
-      setIsMuted(!isMuted);
+      await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
     } catch (error) {
       console.warn("[call] Mute toggle failed:", error);
     }
-  }, [isMuted, localParticipant]);
+  }, [isMicrophoneEnabled, localParticipant]);
 
   const toggleSpeaker = useCallback(async () => {
     try {
@@ -228,107 +601,434 @@ function CallUI({ category }: { category: ComplaintCategoryId }) {
     }
   }, [isSpeakerOn]);
 
+  const closeCall = useCallback(async () => {
+    resolvePendingRequest(
+      {
+        status: "error",
+        message: "The call ended before the requested action was completed.",
+      },
+      "error",
+    );
+
+    try {
+      await room.disconnect();
+    } catch (error) {
+      console.warn("[call] Room disconnect failed:", error);
+      router.back();
+    }
+  }, [resolvePendingRequest, room, router]);
+
   const endCall = useCallback(() => {
     Alert.alert("End Call?", "Are you sure you want to end this call?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "End Call",
         style: "destructive",
-        onPress: () => router.back(),
+        onPress: () => {
+          void closeCall();
+        },
       },
     ]);
-  }, [router]);
+  }, [closeCall]);
 
-  const getStatusLabel = (state: AgentState | undefined) => {
-    if (connectionState === ConnectionState.Connecting) {
-      return "Connecting...";
+  const handleLocationRequest = useCallback(async () => {
+    const pendingRequest = pendingRpcRequestRef.current;
+    if (!pendingRequest || pendingRequest.type !== "location") {
+      return;
     }
-    switch (state) {
-      case "listening":
-        return "Listening...";
-      case "thinking":
-        return "Thinking...";
-      case "speaking":
-        return "Speaking...";
-      default:
-        return "";
+
+    updateMessageActionStatus(pendingRequest.requestId, "running");
+
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        resolvePendingRequest(
+          {
+            status: "denied",
+            message: "Location permission was denied.",
+          },
+          "denied",
+        );
+        return;
+      }
+
+      const currentLocation = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      resolvePendingRequest(
+        {
+          status: "ok",
+          location: {
+            coords: {
+              latitude: currentLocation.coords.latitude,
+              longitude: currentLocation.coords.longitude,
+              accuracy: currentLocation.coords.accuracy ?? null,
+              altitude: currentLocation.coords.altitude ?? null,
+              altitudeAccuracy: currentLocation.coords.altitudeAccuracy ?? null,
+              heading: currentLocation.coords.heading ?? null,
+              speed: currentLocation.coords.speed ?? null,
+            },
+            timestamp: currentLocation.timestamp,
+            ...(typeof (currentLocation as { mocked?: boolean }).mocked ===
+            "boolean"
+              ? { mocked: (currentLocation as { mocked: boolean }).mocked }
+              : {}),
+          },
+        },
+        "success",
+      );
+    } catch (error) {
+      resolvePendingRequest(
+        {
+          status: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to capture device location.",
+        },
+        "error",
+      );
     }
-  };
+  }, [resolvePendingRequest, updateMessageActionStatus]);
+
+  const handlePhotoSelection = useCallback(
+    async (mode: "camera" | "gallery") => {
+      const pendingRequest = pendingRpcRequestRef.current;
+      if (!pendingRequest || pendingRequest.type !== "photo") {
+        return;
+      }
+
+      updateMessageActionStatus(pendingRequest.requestId, "running");
+
+      try {
+        if (mode === "camera") {
+          const permission = await ImagePicker.requestCameraPermissionsAsync();
+          if (!permission.granted) {
+            resolvePendingRequest(
+              {
+                status: "denied",
+                message: "Camera permission was denied.",
+              },
+              "denied",
+            );
+            return;
+          }
+        } else {
+          const permission =
+            await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!permission.granted) {
+            resolvePendingRequest(
+              {
+                status: "denied",
+                message: "Photo library permission was denied.",
+              },
+              "denied",
+            );
+            return;
+          }
+        }
+
+        const pendingResult =
+          Platform.OS === "android"
+            ? await ImagePicker.getPendingResultAsync()
+            : null;
+
+        let pickerResult:
+          | ImagePicker.ImagePickerResult
+          | ImagePicker.ImagePickerErrorResult
+          | null = null;
+
+        if (pendingResult && "code" in pendingResult) {
+          throw new Error(pendingResult.message);
+        }
+
+        if (isSuccessfulPickerResult(pendingResult)) {
+          pickerResult = pendingResult;
+        }
+
+        if (!pickerResult) {
+          pickerResult =
+            mode === "camera"
+              ? await ImagePicker.launchCameraAsync({
+                  mediaTypes: ["images"],
+                  allowsEditing: true,
+                  quality: 0.85,
+                  exif: false,
+                })
+              : await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ["images"],
+                  allowsEditing: true,
+                  quality: 0.85,
+                  exif: false,
+                });
+        }
+
+        if (!isSuccessfulPickerResult(pickerResult)) {
+          resolvePendingRequest(
+            {
+              status: "cancelled",
+              message: "No photo was selected.",
+            },
+            "cancelled",
+          );
+          return;
+        }
+
+        const selectedAsset = pickerResult.assets[0];
+        if (!selectedAsset) {
+          resolvePendingRequest(
+            {
+              status: "cancelled",
+              message: "No photo was selected.",
+            },
+            "cancelled",
+          );
+          return;
+        }
+
+        const { publicUrl } = await uploadComplaintEvidence({
+          asset: selectedAsset,
+          category,
+          roomName: room.name,
+          requestId: pendingRequest.requestId,
+        });
+
+        resolvePendingRequest(
+          {
+            status: "ok",
+            photoUrl: publicUrl,
+          },
+          "success",
+        );
+      } catch (error) {
+        resolvePendingRequest(
+          {
+            status: "error",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Unable to add the complaint photo.",
+          },
+          "error",
+        );
+      }
+    },
+    [category, resolvePendingRequest, room.name, updateMessageActionStatus],
+  );
+
+  const handlePhotoRequest = useCallback(() => {
+    const pendingRequest = pendingRpcRequestRef.current;
+    if (!pendingRequest || pendingRequest.type !== "photo") {
+      return;
+    }
+
+    Alert.alert(
+      "Add Photo",
+      "Choose how you want to share the complaint photo.",
+      [
+        {
+          text: "Take Photo",
+          onPress: () => {
+            void handlePhotoSelection("camera");
+          },
+        },
+        {
+          text: "Choose from Gallery",
+          onPress: () => {
+            void handlePhotoSelection("gallery");
+          },
+        },
+        {
+          text: "Cancel",
+          style: "cancel",
+          onPress: () => {
+            resolvePendingRequest(
+              {
+                status: "cancelled",
+                message: "Photo selection was cancelled.",
+              },
+              "cancelled",
+            );
+          },
+        },
+      ],
+    );
+  }, [handlePhotoSelection, resolvePendingRequest]);
+
+  const handleActionPress = useCallback(
+    (message: TranscriptMessage) => {
+      const actionRequest = message.actionRequest;
+      if (!actionRequest || actionRequest.status !== "waiting") {
+        return;
+      }
+
+      if (actionRequest.type === "location") {
+        void handleLocationRequest();
+        return;
+      }
+
+      handlePhotoRequest();
+    },
+    [handleLocationRequest, handlePhotoRequest],
+  );
+
+  const renderMessage = useCallback(
+    ({ item }: { item: TranscriptMessage }) => {
+      const isCitizen = item.sender === "citizen";
+      const actionRequest = item.actionRequest;
+      const isActionDisabled =
+        !actionRequest || actionRequest.status !== "waiting";
+
+      return (
+        <View
+          style={[
+            styles.messageRow,
+            isCitizen ? styles.messageCitizenRow : styles.messageEffiRow,
+          ]}
+        >
+          <Text
+            style={isCitizen ? styles.senderLabelSelf : styles.senderLabel}
+          >
+            {isCitizen ? "Citizen" : "Effi"}
+          </Text>
+
+          <View
+            style={[
+              styles.messageBubble,
+              isCitizen ? styles.messageCitizen : styles.messageEffi,
+            ]}
+          >
+            <Text
+              style={[
+                styles.messageText,
+                isCitizen ? styles.messageCitizenText : styles.messageEffiText,
+              ]}
+            >
+              {item.text}
+              {item.isStreaming ? "..." : ""}
+            </Text>
+          </View>
+
+          {actionRequest ? (
+            <View style={styles.actionGroup}>
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  isActionDisabled && styles.actionButtonDisabled,
+                ]}
+                onPress={() => handleActionPress(item)}
+                activeOpacity={0.8}
+                disabled={isActionDisabled}
+              >
+                <Text style={styles.actionText}>
+                  {getActionStatusText(
+                    actionRequest.type,
+                    actionRequest.status,
+                  )}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </View>
+      );
+    },
+    [handleActionPress],
+  );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.topBar}>
-        <TouchableOpacity style={styles.iconBtn} onPress={endCall}>
-          <Ionicons name="chevron-back" size={24} color="#0F172A" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Voice Assistant</Text>
-        <TouchableOpacity style={styles.iconBtn}>
-          <Ionicons name="ellipsis-horizontal" size={24} color="#0F172A" />
-        </TouchableOpacity>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.waveformContainer}>
+        <Text style={styles.callMeta}>{categoryInfo.label}</Text>
+        {Platform.OS === "android" ? (
+          <AudioWaveView
+            style={styles.waveform}
+            samples={samples}
+            progress={0}
+            waveBackgroundColor="#94A3B8"
+            waveProgressColor="#4e97bb"
+            waveWidth={5}
+            waveGap={3}
+            waveCornerRadius={2}
+            waveMinHeight={8}
+          />
+        ) : (
+          <Text style={styles.platformWarning}>
+            Live waveform preview is currently available on Android.
+          </Text>
+        )}
+        <Text style={styles.callStatus}>
+          {connectionState === ConnectionState.Connecting
+            ? "Connecting..."
+            : connectionState === ConnectionState.Connected
+              ? `${formatDuration(callDuration)} · ${language.toUpperCase()}`
+              : "Reconnecting..."}
+        </Text>
       </View>
 
-      <Text style={styles.greetingText}>{getStatusLabel(agentState)}</Text>
-
-      <View style={styles.visualizerContainer}>
-        <GlowWaveVisualizer agentState={agentState} audioTrack={audioTrack} />
-
-        {connectionState === ConnectionState.Connected && (
-          <Text style={styles.duration}>{formatDuration(callDuration)}</Text>
-        )}
+      <View style={styles.transcriptContainer}>
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(item) => item.id}
+          renderItem={renderMessage}
+          contentContainerStyle={styles.transcriptList}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={() =>
+            flatListRef.current?.scrollToEnd({ animated: true })
+          }
+        />
       </View>
 
       <View style={styles.controlsContainer}>
-        <Text style={styles.deptSubInfo}>Connected to {categoryInfo.label}</Text>
-        <View style={styles.controls}>
-          <TouchableOpacity
-            style={[styles.controlBtn, isMuted && styles.controlBtnActive]}
-            onPress={toggleMute}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={isMuted ? "mic-off" : "mic"}
-              size={24}
-              color={isMuted ? "#EF4444" : "#475569"}
-            />
-          </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.controlButton,
+            !isMicrophoneEnabled && styles.controlButtonActive,
+          ]}
+          onPress={() => {
+            void toggleMute();
+          }}
+          activeOpacity={0.8}
+        >
+          <MaterialCommunityIcons
+            name={isMicrophoneEnabled ? "microphone" : "microphone-off"}
+            size={28}
+            color={!isMicrophoneEnabled ? "#FFFFFF" : "#1e293b"}
+          />
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.endBtnMain}
-            onPress={endCall}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="close" size={32} color="#FFFFFF" />
-          </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.controlButton, styles.endCallButton]}
+          onPress={endCall}
+          activeOpacity={0.85}
+        >
+          <MaterialCommunityIcons name="phone-hangup" size={32} color="#fff" />
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[
-              styles.controlBtn,
-              isSpeakerOn && styles.controlBtnActive,
-              connectionState !== ConnectionState.Connected &&
-                styles.controlBtnDisabled,
-            ]}
-            onPress={
-              connectionState === ConnectionState.Connected
-                ? toggleSpeaker
-                : undefined
+        <TouchableOpacity
+          style={[
+            styles.controlButton,
+            isSpeakerOn && styles.controlButtonActive,
+            connectionState !== ConnectionState.Connected &&
+              styles.controlButtonDisabled,
+          ]}
+          onPress={() => {
+            if (connectionState === ConnectionState.Connected) {
+              void toggleSpeaker();
             }
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={isSpeakerOn ? "volume-high" : "volume-medium"}
-              size={24}
-              color={
-                connectionState !== ConnectionState.Connected
-                  ? "#CBD5E1"
-                  : isSpeakerOn
-                    ? "#3B82F6"
-                    : "#475569"
-              }
-            />
-          </TouchableOpacity>
-        </View>
+          }}
+          activeOpacity={0.8}
+          disabled={connectionState !== ConnectionState.Connected}
+        >
+          <MaterialCommunityIcons
+            name={isSpeakerOn ? "volume-high" : "volume-medium"}
+            size={28}
+            color={isSpeakerOn ? "#FFFFFF" : "#1e293b"}
+          />
+        </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -336,7 +1036,7 @@ export default function CallScreen() {
   const params = useLocalSearchParams<Record<string, string>>();
   const router = useRouter();
 
-  const { token, serverUrl, category } = params;
+  const { token, serverUrl, category, language } = params;
 
   useEffect(() => {
     const start = async () => {
@@ -349,6 +1049,7 @@ export default function CallScreen() {
             },
           });
         }
+
         await AudioSession.startAudioSession();
         console.log("[call] Audio session started");
       } catch (error) {
@@ -356,7 +1057,8 @@ export default function CallScreen() {
       }
     };
 
-    start();
+    void start();
+
     return () => {
       AudioSession.stopAudioSession();
       console.log("[call] Audio session stopped");
@@ -391,7 +1093,10 @@ export default function CallScreen() {
         ]);
       }}
     >
-      <CallUI category={category as ComplaintCategoryId} />
+      <CallUI
+        category={category as ComplaintCategoryId}
+        language={language ?? "en"}
+      />
     </LiveKitRoom>
   );
 }
@@ -399,110 +1104,152 @@ export default function CallScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: 60,
-    paddingBottom: 40,
-    paddingHorizontal: 20,
-  },
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    width: "100%",
-  },
-  iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
     backgroundColor: "#FFFFFF",
+  },
+  waveformContainer: {
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    backgroundColor: "#f8fafc",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e2e8f0",
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 18,
+    gap: 8,
   },
-  headerTitle: {
-    fontSize: 16,
+  callMeta: {
+    color: "#1e293b",
+    fontSize: 14,
     fontWeight: "700",
-    color: "#0F172A",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
   },
-  greetingText: {
-    fontSize: 24,
-    fontWeight: "600",
-    color: "#1E293B",
-    textAlign: "center",
-    marginTop: 20,
-    paddingHorizontal: 20,
-    lineHeight: 32,
+  waveform: {
+    width: "82%",
+    height: 60,
   },
-  visualizerContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-    gap: 24,
-    width: "100%",
-  },
-  duration: {
+  platformWarning: {
     color: "#64748B",
-    fontSize: 16,
-    fontWeight: "500",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  callStatus: {
+    color: "#64748B",
+    fontSize: 14,
+    fontWeight: "600",
     fontVariant: ["tabular-nums"],
   },
-  controlsContainer: {
-    width: "100%",
-    alignItems: "center",
+  transcriptContainer: {
+    flex: 1,
   },
-  deptSubInfo: {
-    color: "#94A3B8",
-    fontSize: 14,
-    fontWeight: "500",
+  transcriptList: {
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    paddingBottom: 32,
+  },
+  messageRow: {
     marginBottom: 20,
+    maxWidth: "82%",
   },
-  controls: {
+  messageEffiRow: {
+    alignSelf: "flex-start",
+  },
+  messageCitizenRow: {
+    alignSelf: "flex-end",
+  },
+  senderLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1e293b",
+    marginBottom: 4,
+    marginLeft: 4,
+  },
+  senderLabelSelf: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#1e293b",
+    marginBottom: 4,
+    marginRight: 4,
+    textAlign: "right",
+  },
+  messageBubble: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 20,
+  },
+  messageEffi: {
+    backgroundColor: "#e2e8f0",
+    borderTopLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  messageCitizen: {
+    backgroundColor: "#bae6fd",
+    borderTopRightRadius: 4,
+    borderWidth: 1,
+    borderColor: "#93c5fd",
+  },
+  messageText: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  messageEffiText: {
+    color: "#1e293b",
+  },
+  messageCitizenText: {
+    color: "#0f172a",
+  },
+  actionGroup: {
+    marginTop: 8,
+  },
+  actionButton: {
+    alignSelf: "flex-start",
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  actionButtonDisabled: {
+    backgroundColor: "#94A3B8",
+  },
+  actionText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  controlsContainer: {
     flexDirection: "row",
+    justifyContent: "space-evenly",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 24,
+    paddingTop: 18,
+    paddingBottom: 24,
     backgroundColor: "#FFFFFF",
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 999,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 24,
-    elevation: 6,
+    borderTopWidth: 1,
+    borderTopColor: "#e2e8f0",
   },
-  controlBtn: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#F1F5F9",
-    alignItems: "center",
+  controlButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#f1f5f9",
     justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
   },
-  controlBtnActive: {
-    backgroundColor: "#E2E8F0",
+  controlButtonActive: {
+    backgroundColor: "#64748B",
+    borderColor: "#64748B",
   },
-  controlBtnDisabled: {
-    opacity: 0.5,
+  controlButtonDisabled: {
+    opacity: 0.45,
   },
-  endBtnMain: {
+  endCallButton: {
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: "#3B82F6",
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#3B82F6",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
+    backgroundColor: "#ef4444",
+    borderWidth: 0,
   },
   errorContainer: {
     flex: 1,
@@ -519,10 +1266,10 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   backBtn: {
-    backgroundColor: "#3B82F6",
+    backgroundColor: "#2563EB",
     paddingHorizontal: 20,
-    paddingVertical: 14,
-    borderRadius: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
   },
   backBtnText: {
     color: "#FFFFFF",

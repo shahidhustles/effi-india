@@ -16,8 +16,8 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen
-          name="index"
-          options={{ title: "Home" }}
+          name="(tabs)"
+          options={{ title: "Home", headerShown: false }}
         />
         <Stack.Screen
           name="call"
