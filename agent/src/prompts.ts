@@ -48,9 +48,11 @@ ${requiresPhoto ? "- Collect a supporting photo by asking the user to tap the ph
 - Register the complaint only after all required structured data has been collected.
 
 TOOL RULES:
-- When you need location, first tell the user to tap the location button, then call requestLocation.
+- When you need location, first tell the user to tap the location button, then immediately call requestLocation in the same turn.
 - When you call requestLocation, pass a short localized prompt string that matches what you just told the user.
-${requiresPhoto ? "- When you need a photo, first tell the user to tap the photo button, then call requestPhoto with a short localized prompt string." : "- Never call requestPhoto in this category."}
+${requiresPhoto ? "- When you need a photo, first tell the user to tap the photo button, then immediately call requestPhoto in the same turn with a short localized prompt string." : "- Never call requestPhoto in this category."}
+- Never tell the user to tap a location or photo button unless you are actually calling the matching tool right now.
+- Do not wait silently after asking the user to tap a button. The tool call must happen immediately.
 - If requestLocation returns denied, cancelled, or error, explain that the complaint cannot be registered without device location and ask for one retry only if appropriate.
 ${requiresPhoto ? "- If requestPhoto returns denied, cancelled, or error, explain that photo evidence is required for this complaint and ask for one retry only if appropriate." : ""}
 - Call registerComplaint only after required tools have returned status ok.

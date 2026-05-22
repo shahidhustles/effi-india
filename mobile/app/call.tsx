@@ -437,7 +437,7 @@ function CallUI({
   }, [connectionState, localParticipant]);
 
   useEffect(() => {
-    if (connectionState !== ConnectionState.Connected) {
+    if (connectionState !== ConnectionState.Connected || !localParticipant) {
       return;
     }
 
@@ -516,6 +516,10 @@ function CallUI({
           );
         }
 
+        console.log(
+          `[call] RPC received: ${expectedType} | requestId=${payload.requestId} | prompt="${payload.prompt}"`,
+        );
+
         const messageId = attachActionRequestToTranscript(payload, expectedType);
         return await new Promise<string>((resolve) => {
           pendingRpcRequestRef.current = {
@@ -536,18 +540,21 @@ function CallUI({
       }
     };
 
-    room.registerRpcMethod(LOCATION_RPC_METHOD, (data) =>
+    localParticipant.registerRpcMethod(LOCATION_RPC_METHOD, (data) =>
       handleRpcRequest("location", data),
     );
-    room.registerRpcMethod(PHOTO_RPC_METHOD, (data) =>
+    localParticipant.registerRpcMethod(PHOTO_RPC_METHOD, (data) =>
       handleRpcRequest("photo", data),
     );
 
+    console.log("[call] RPC handlers registered on local participant");
+
     return () => {
-      room.unregisterRpcMethod(LOCATION_RPC_METHOD);
-      room.unregisterRpcMethod(PHOTO_RPC_METHOD);
+      localParticipant.unregisterRpcMethod(LOCATION_RPC_METHOD);
+      localParticipant.unregisterRpcMethod(PHOTO_RPC_METHOD);
+      console.log("[call] RPC handlers unregistered");
     };
-  }, [attachActionRequestToTranscript, connectionState, room]);
+  }, [attachActionRequestToTranscript, connectionState, localParticipant]);
 
   useEffect(() => {
     return () => {

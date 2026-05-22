@@ -42,6 +42,9 @@ async function performClientRpc(
   const destinationIdentity = await ensureCitizenIdentity(ctx, state);
 
   try {
+    console.log(
+      `[agent] Performing RPC ${method} -> ${destinationIdentity} | prompt="${payload.prompt}"`,
+    );
     return await ctx.room.localParticipant.performRpc({
       destinationIdentity,
       method,
@@ -50,6 +53,9 @@ async function performClientRpc(
     });
   } catch (error) {
     const rpcError = error as RpcError;
+    console.error(
+      `[agent] RPC ${method} failed for ${destinationIdentity}: ${rpcError.message ?? "Unknown LiveKit RPC error"}`,
+    );
     throw new Error(
       `RPC ${method} failed: ${rpcError.message ?? "Unknown LiveKit RPC error"}`,
     );
