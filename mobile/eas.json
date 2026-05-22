@@ -3,20 +3,23 @@
     "version": ">= 13.0.0"
   },
   "build": {
+    "base": {
+      "env": {
+        "EXPO_PUBLIC_AGENT_API_URL": "https://token-server-tawny.vercel.app",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://npfzziwsmncgaaqktcfz.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_tx-jGmcodJPzzrrxGO-cjw_QhBXbHB1"
+      }
+    },
     "preview": {
+      "extends": "base",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_AGENT_API_URL": "https://token-server-tawny.vercel.app"
       }
     },
     "production": {
+      "extends": "base",
       "android": {
         "buildType": "app-bundle"
-      },
-      "env": {
-        "EXPO_PUBLIC_AGENT_API_URL": "https://token-server-tawny.vercel.app"
       }
     }
   }
