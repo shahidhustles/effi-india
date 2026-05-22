@@ -46,6 +46,14 @@ function requirePhotoIfNeeded(state: SessionState) {
   }
 }
 
+function requireAuthenticatedUser(state: SessionState) {
+  if (!state.userId) {
+    throw new Error(
+      "Authenticated user metadata is missing from the LiveKit session.",
+    );
+  }
+}
+
 export function createComplaintTools({
   ctx,
   state,
@@ -166,11 +174,18 @@ export function createComplaintTools({
       }
 
       requireLocation(state);
+      requireAuthenticatedUser(state);
       requirePhotoIfNeeded(state);
 
       const location = state.location;
+      const userId = state.userId;
       if (!location) {
         throw new Error("Device location has not been collected yet.");
+      }
+      if (!userId) {
+        throw new Error(
+          "Authenticated user metadata is missing from the LiveKit session.",
+        );
       }
 
       state.problemType = problemType;
@@ -180,6 +195,7 @@ export function createComplaintTools({
       state.language = language || state.language;
 
       const inserted = await insertComplaint({
+        userId,
         category: state.category,
         problemType,
         description,

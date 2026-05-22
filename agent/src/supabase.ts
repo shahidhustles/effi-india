@@ -61,6 +61,7 @@ export async function insertComplaint(input: ComplaintInsertInput) {
 
   const { data, error } = await supabase.rpc("create_complaint_ticket", {
     complaint_payload: {
+      user_id: input.userId,
       ticket_number: ticketNumber,
       category: input.category,
       problem_type: input.problemType,

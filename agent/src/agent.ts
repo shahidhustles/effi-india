@@ -51,7 +51,7 @@ const CATEGORY_NAMES: Record<ComplaintCategory, string> = {
 
 function parseSessionMetadata(metadata: string | undefined): RoomMetadata {
   if (!metadata) {
-    return { category: "SANITATION", language: "en" };
+    return { category: "SANITATION", language: "en", userId: null };
   }
 
   try {
@@ -59,9 +59,10 @@ function parseSessionMetadata(metadata: string | undefined): RoomMetadata {
     return {
       category: parsed.category ?? "SANITATION",
       language: parsed.language ?? "en",
+      userId: typeof parsed.userId === "string" ? parsed.userId : null,
     };
   } catch {
-    return { category: "SANITATION", language: "en" };
+    return { category: "SANITATION", language: "en", userId: null };
   }
 }
 
@@ -156,6 +157,7 @@ export default defineAgent({
     const state: SessionState = {
       category: sessionMetadata.category,
       language: sessionMetadata.language ?? "en",
+      userId: sessionMetadata.userId ?? null,
       callerName: null,
       problemType: null,
       description: null,
@@ -172,6 +174,7 @@ export default defineAgent({
     console.log(
       `[agent] Citizen participant connected: ${state.citizenIdentity}`,
     );
+    console.log(`[agent] Authenticated user: ${state.userId ?? "missing"}`);
 
     const vad = ctx.proc.userData.vad as silero.VAD;
 

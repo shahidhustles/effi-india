@@ -1,6 +1,7 @@
 import { Tabs } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { StyleSheet, Platform } from "react-native";
+import { COLORS } from "../../constants/theme";
 
 export default function TabLayout() {
   return (
@@ -10,8 +11,8 @@ export default function TabLayout() {
         tabBarShowLabel: true,
         tabBarStyle: styles.tabBar,
         tabBarItemStyle: styles.tabBarItem,
-        tabBarActiveTintColor: "#4e97bb",
-        tabBarInactiveTintColor: "#64748B", // faded gray for inactive to match image better
+        tabBarActiveTintColor: COLORS.primarySoft,
+        tabBarInactiveTintColor: COLORS.muted,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: "600",
@@ -67,13 +68,8 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    position: "absolute",
-    bottom: 40,
-    left: 24,
-    right: 24,
     height: 72,
-    borderRadius: 36,
-    backgroundColor: "#0B1519", 
+    backgroundColor: COLORS.navBackground,
     borderTopWidth: 0,
     elevation: 8,
     shadowColor: "#000",

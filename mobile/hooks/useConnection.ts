@@ -3,6 +3,7 @@ import {
   AGENT_API_URL,
   type ComplaintCategoryId,
 } from "../constants/config";
+import { useAuth } from "./useAuth";
 
 export interface ConnectionDetails {
   token: string;
@@ -15,6 +16,7 @@ export interface ConnectionDetails {
 export type ConnectionState = "idle" | "fetching" | "ready" | "error";
 
 export function useConnection() {
+  const { session } = useAuth();
   const [connectionDetails, setConnectionDetails] =
     useState<ConnectionDetails | null>(null);
   const [state, setState] = useState<ConnectionState>("idle");
@@ -25,13 +27,22 @@ export function useConnection() {
       category: ComplaintCategoryId,
       language: string = "en",
     ): Promise<ConnectionDetails | null> => {
+      if (!session?.access_token) {
+        setError("You must be signed in before starting an interaction.");
+        setState("error");
+        return null;
+      }
+
       setState("fetching");
       setError(null);
 
       try {
         const response = await fetch(`${AGENT_API_URL}/token`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
           body: JSON.stringify({ category, language }),
         });
 
@@ -51,7 +62,7 @@ export function useConnection() {
         return null;
       }
     },
-    [],
+    [session?.access_token],
   );
 
   const reset = useCallback(() => {

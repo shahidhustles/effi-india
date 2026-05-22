@@ -1,35 +1,77 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
   ActivityIndicator,
   Alert,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
-import { useRouter } from "expo-router";
-import { MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useRouter, useFocusEffect } from "expo-router";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Avatar } from "../../components/avatar";
+import { ComplaintCard } from "../../components/complaint-card";
+import { EmptyState } from "../../components/empty-state";
+import { COLORS, SHADOW } from "../../constants/theme";
 import {
   COMPLAINT_CATEGORIES,
   type ComplaintCategoryId,
 } from "../../constants/config";
+import { useAuth } from "../../hooks/useAuth";
 import { useConnection } from "../../hooks/useConnection";
+import {
+  fetchRecentComplaints,
+  getUserFirstName,
+  type ComplaintListItem,
+} from "../../lib/supabase";
 
 export default function HomeScreen() {
   const router = useRouter();
   const { connect, state } = useConnection();
+  const { profile, user } = useAuth();
   const [selectedCategory, setSelectedCategory] =
     useState<ComplaintCategoryId>("SANITATION");
+  const [recentComplaints, setRecentComplaints] = useState<ComplaintListItem[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingRecent, setIsLoadingRecent] = useState(true);
 
   const isFetching = state === "fetching";
+
+  const loadRecentComplaints = useCallback(async () => {
+    try {
+      setIsLoadingRecent(true);
+      const complaints = await fetchRecentComplaints(5);
+      setRecentComplaints(complaints);
+    } catch (error) {
+      console.warn("[home] Failed to fetch recent complaints:", error);
+    } finally {
+      setIsLoadingRecent(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadRecentComplaints();
+    }, [loadRecentComplaints]),
+  );
+
+  const onRefresh = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      await loadRecentComplaints();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [loadRecentComplaints]);
 
   async function handleStartCall() {
     const details = await connect(selectedCategory, "en");
     if (!details) {
       Alert.alert(
         "Connection Failed",
-        "Could not reach the Effi server. Make sure the agent is running and AGENT_API_URL is correct.",
+        "Could not reach the Effi server. Make sure the token server is deployed and your session is active.",
         [{ text: "OK" }],
       );
       return;
@@ -49,22 +91,28 @@ export default function HomeScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        
-        {/* Header Section */}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
+        }
+      >
         <View style={styles.header}>
           <View style={styles.headerLeft}>
-            <View style={styles.avatarPlaceholder}>
-              <MaterialCommunityIcons name="account" size={32} color="#185079" />
-            </View>
-            <View>
+            <Avatar
+              size={48}
+              name={profile?.full_name ?? user?.email ?? "Citizen"}
+              url={profile?.avatar_url}
+            />
+            <View style={styles.headerTextBlock}>
               <Text style={styles.headerGreeting}>Good Morning,</Text>
-              <Text style={styles.headerName}>Citizen</Text>
+              <Text style={styles.headerName}>
+                {getUserFirstName(user, profile)}
+              </Text>
             </View>
           </View>
         </View>
 
-        {/* Quick Actions (Our Call Options) */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
         </View>
@@ -80,7 +128,7 @@ export default function HomeScreen() {
                   isSelected && styles.quickActionCardSelected,
                 ]}
                 onPress={() => setSelectedCategory(entry.id)}
-                activeOpacity={0.7}
+                activeOpacity={0.8}
               >
                 <View
                   style={[
@@ -91,7 +139,7 @@ export default function HomeScreen() {
                   <MaterialCommunityIcons
                     name={entry.iconName}
                     size={28}
-                    color={isSelected ? "#FFFFFF" : "#185079"}
+                    color={isSelected ? "#FFFFFF" : COLORS.primary}
                   />
                 </View>
                 <Text
@@ -108,33 +156,39 @@ export default function HomeScreen() {
           })}
         </View>
 
-        {/* Start Button */}
         <TouchableOpacity
           style={[styles.callBtn, isFetching && styles.callBtnDisabled]}
           onPress={handleStartCall}
           disabled={isFetching}
-          activeOpacity={0.8}
+          activeOpacity={0.85}
         >
           {isFetching ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <>
-              <Text style={styles.callBtnText}>Start Interaction</Text>
-            </>
+            <Text style={styles.callBtnText}>Start Interaction</Text>
           )}
         </TouchableOpacity>
-
-        {/* Recent Complaints Section */}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Recent Complaints</Text>
         </View>
-        <View style={styles.serviceCategoriesContainer}>
-           <View style={styles.emptyState}>
-             <Text style={styles.emptyStateText}>No recent complaints found</Text>
-           </View>
-        </View>
 
+        <View style={styles.recentContainer}>
+          {isLoadingRecent ? (
+            <View style={styles.loadingState}>
+              <ActivityIndicator color={COLORS.primary} />
+            </View>
+          ) : recentComplaints.length === 0 ? (
+            <EmptyState
+              title="No recent complaints"
+              message="Your recent requests will appear here after you register a complaint."
+            />
+          ) : (
+            recentComplaints.map((complaint) => (
+              <ComplaintCard key={complaint.id} item={complaint} />
+            ))
+          )}
+        </View>
       </ScrollView>
     </View>
   );
@@ -143,12 +197,12 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: COLORS.background,
   },
   scrollContent: {
-    padding: 24,
+    paddingHorizontal: 24,
     paddingTop: 60,
-    paddingBottom: 100, // Leave space for bottom nav
+    paddingBottom: 100,
   },
   header: {
     flexDirection: "row",
@@ -160,73 +214,59 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
-  avatarPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "#bbd6e1",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
+  headerTextBlock: {
+    marginLeft: 12,
   },
   headerGreeting: {
     fontSize: 14,
-    color: "#64748B",
+    color: COLORS.muted,
     marginBottom: 2,
   },
   headerName: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#185079",
+    color: COLORS.primary,
   },
   sectionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
     marginBottom: 16,
     marginTop: 8,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#1E293B",
+    color: COLORS.text,
   },
   quickActionsContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 32,
+    marginBottom: 28,
   },
   quickActionCard: {
     width: "31%",
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
     padding: 12,
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.04,
-    shadowRadius: 16,
-    elevation: 2,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: "transparent",
+    ...SHADOW,
   },
   quickActionCardSelected: {
-    borderColor: "#4e97bb",
-    backgroundColor: "#ffffff",
+    borderColor: COLORS.primarySoft,
   },
   iconBox: {
     width: 52,
     height: 52,
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
   },
   iconBoxUnselected: {
-    backgroundColor: "#bbd6e1", // our palette light blue
+    backgroundColor: COLORS.primaryTint,
   },
   iconBoxSelected: {
-    backgroundColor: "#4e97bb", // our palette main blue
+    backgroundColor: COLORS.primarySoft,
   },
   quickActionText: {
     fontSize: 12,
@@ -235,45 +275,35 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   quickActionTextSelected: {
-    color: "#185079",
+    color: COLORS.primary,
   },
   callBtn: {
-    backgroundColor: "#185079",
-    borderRadius: 999,
-    flexDirection: "row",
+    backgroundColor: COLORS.primary,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 18,
-    marginBottom: 32,
-    shadowColor: "#185079",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 6,
+    paddingVertical: 17,
+    marginBottom: 28,
+    ...SHADOW,
   },
   callBtnDisabled: {
-    backgroundColor: "#95bfd1",
-    shadowOpacity: 0,
-    elevation: 0,
+    backgroundColor: COLORS.primarySoft,
   },
   callBtnText: {
     color: "#FFFFFF",
     fontSize: 18,
     fontWeight: "700",
-    marginLeft: 8,
   },
-  serviceCategoriesContainer: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 24,
+  recentContainer: {
+    gap: 14,
+  },
+  loadingState: {
+    backgroundColor: COLORS.surface,
+    borderRadius: 16,
+    paddingVertical: 28,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
-  emptyState: {
-    padding: 20,
-  },
-  emptyStateText: {
-    color: "#94A3B8",
-    fontSize: 14,
-  }
 });

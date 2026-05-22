@@ -74,7 +74,8 @@
           "locationWhenInUsePermission": "Effi India needs your location to mark the complaint accurately."
         }
       ],
-      "expo-router"
+      "expo-router",
+      "expo-web-browser"
     ],
     "extra": {
       "router": {},

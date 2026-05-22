@@ -9,6 +9,7 @@ export type ComplaintCategory = (typeof COMPLAINT_CATEGORIES)[number];
 export interface RoomMetadata {
   category: ComplaintCategory;
   language?: string;
+  userId?: string | null;
 }
 
 export interface LocationPayload {
@@ -64,6 +65,7 @@ export interface TranscriptTurn {
 export interface SessionState {
   category: ComplaintCategory;
   language: string;
+  userId: string | null;
   callerName: string | null;
   problemType: string | null;
   description: string | null;
@@ -75,6 +77,7 @@ export interface SessionState {
 }
 
 export interface ComplaintInsertInput {
+  userId: string;
   category: ComplaintCategory;
   problemType: string;
   description: string;
