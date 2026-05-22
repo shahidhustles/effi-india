@@ -69,6 +69,14 @@ function formatTime(value: string) {
   }).format(new Date(value))
 }
 
+function getGoogleMapsSearchUrl(latitude: number, longitude: number) {
+  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`
+}
+
+function getGoogleMapsEmbedUrl(latitude: number, longitude: number) {
+  return `https://www.google.com/maps?q=${latitude},${longitude}&z=16&output=embed`
+}
+
 function statusClass(status: ComplaintStatus) {
   if (status === "resolved") {
     return "border-[#BFE3C7] bg-[#E8F5EC] text-[#166534]"
@@ -522,6 +530,46 @@ export function DashboardBoard({ initialRows, adminEmail }: DashboardBoardProps)
                     <SelectItem value="resolved">Resolved</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-sm font-medium">Map</h2>
+                  {detail.location ? (
+                    <a
+                      href={getGoogleMapsSearchUrl(
+                        detail.location.latitude,
+                        detail.location.longitude
+                      )}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sm font-medium text-[#185079] hover:text-[#16476c]"
+                    >
+                      <MapPin className="size-4" />
+                      Open in Google Maps
+                    </a>
+                  ) : null}
+                </div>
+                {detail.location ? (
+                  <div className="overflow-hidden rounded-md border border-[#D9E3EA] bg-white">
+                    <iframe
+                      title="Complaint location map"
+                      src={getGoogleMapsEmbedUrl(
+                        detail.location.latitude,
+                        detail.location.longitude
+                      )}
+                      className="h-64 w-full border-0"
+                      loading="lazy"
+                      referrerPolicy="no-referrer-when-downgrade"
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-[#D9E3EA] p-4 text-sm text-[#64748B]">
+                    Location coordinates are not available for this complaint.
+                  </div>
+                )}
               </div>
 
               <Separator />
